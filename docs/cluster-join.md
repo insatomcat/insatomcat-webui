@@ -61,6 +61,41 @@ Two consequences for the implementation:
   where the account is missing, it refuses to converge and says why, rather than
   inventing a user with privileges nobody reviewed.
 
+### Provisioned at every start, not only at the first
+
+The self relation is re-provisioned on every start rather than guarded by a
+"first boot" flag, which turns it from an initialisation into a repair. Two
+cases make that worth the trouble:
+
+- `seapath_setup_network.yaml` can move the administration address, and a
+  `from=` clause naming the old one authorises nothing. Rewriting the line from
+  the addresses currently observed is what fixes it.
+- A renamed machine would otherwise leave behind a line authorising the same
+  key under a name nobody recognises. Our lines are deduplicated by key, so the
+  stale one goes.
+
+### The host key, on the first connection
+
+A first SSH connection to a machine whose host key is unknown either prompts,
+which hangs a run forever, or is waved through with
+`StrictHostKeyChecking=no`, which is a genuine man in the middle window on the
+administration network. For the local machine there is a third answer and it is
+strictly better than both: read the host's own public host keys off its
+filesystem, through the read only `/etc/ssh` mount, and write them into a
+`known_hosts` the service owns. No network is involved, so there is nothing to
+intercept, and host key checking stays on.
+
+The same shape works for a peer at M3, where the host key travels over the
+mutually authenticated TLS channel rather than over the wire unverified.
+
+### The connection credentials are not in the inventory
+
+Which private key this control machine uses is a fact about **this** control
+machine, not about the desired state, so it is passed to `ansible-runner` in
+the environment and never written into the inventory. That is precisely why the
+exported inventory works unchanged on a conventional control machine that has
+its own key.
+
 ## 3. The manual exchange, and what it buys
 
 Same gesture as Proxmox, one paste per added node.

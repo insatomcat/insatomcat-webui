@@ -1,0 +1,498 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+"""Runs: the invocation, the event mapping, and how a run ends.
+
+The interruption cases carry most of the weight here. A playbook can reboot the
+machine running it, so a run that dies mid flight is the ordinary case, not the
+exceptional one.
+"""
+
+from __future__ import annotations
+
+import configparser
+import time
+from pathlib import Path
+
+import pytest
+
+from app.core.errors import ApiError
+from app.hosts.fake import FakeHostReader
+from app.inventory.repository import InventoryRepository
+from app.inventory.service import InventoryService
+from app.runs import catalogue, fake
+from app.runs.adapter import RunRequest, prepare
+from app.runs.models import RunProgress, RunState
+from app.runs.progress import apply_event, summarise
+from app.runs.service import RunPaths, RunService
+from app.runs.store import RunLocked, RunStore
+from app.trust.service import TrustService
+from tests.fakes import write_fake_collection
+
+SITE_KEY = "ssh-rsa AAAAsite ansible@control-machine"
+
+
+@pytest.fixture
+def trust(tmp_path: Path) -> TrustService:
+    ssh_home = tmp_path / "home/ansible/.ssh"
+    ssh_home.mkdir(parents=True)
+    (ssh_home / "authorized_keys").write_text(SITE_KEY + "\n")
+    service = TrustService(
+        ssh_dir=tmp_path / "state/ssh",
+        authorized_keys_file=ssh_home / "authorized_keys",
+    )
+    service.ensure_self_trust("seapath-machine", ["192.168.200.125"])
+    return service
+
+
+@pytest.fixture
+def inventory(tmp_path: Path) -> InventoryService:
+    service = InventoryService(
+        InventoryRepository(tmp_path / "inventory"), FakeHostReader()
+    )
+    service.ensure_seed()
+    return service
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> RunStore:
+    return RunStore(tmp_path / "runs")
+
+
+def build(
+    store: RunStore,
+    inventory: InventoryService,
+    trust: TrustService,
+    adapter,
+    tmp_path: Path,
+) -> RunService:
+    return RunService(
+        store=store,
+        adapter=adapter,
+        inventory=inventory,
+        trust=trust,
+        paths=RunPaths(
+            collections_path=write_fake_collection(tmp_path / "collections"),
+            private_key_file=tmp_path / "state/ssh/id_ed25519_self",
+            known_hosts_file=tmp_path / "state/ssh/known_hosts",
+        ),
+        hostname="seapath-machine",
+        collection_version="2.0.0",
+    )
+
+
+def wait_for(service: RunService, run_id: str, timeout: float = 5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        record = service.get(run_id)
+        if record is not None and record.finished:
+            return record
+        time.sleep(0.01)
+    raise AssertionError(f"Run {run_id} did not finish")
+
+
+# The invocation
+
+
+def test_the_invocation_carries_the_settings_the_collection_does_not_ship(
+    tmp_path: Path,
+) -> None:
+    # seapath-ansible lists ansible.cfg under galaxy.yml build_ignore, so the
+    # installed collection carries none of it. Losing these would gather facts
+    # everywhere, continue past a failed host, and install packages.
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.seapath_setup_main",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+        )
+    )
+    config = preparation.config_file.read_text()
+
+    assert "gathering = explicit" in config
+    assert "any_errors_fatal = True" in config
+    assert "skip = package-install" in config
+    assert "force_valid_group_names = ignore" in config
+    # The host key is read from the machine's own filesystem, so checking stays
+    # on rather than being waved through.
+    assert "host_key_checking = True" in config
+    assert f"UserKnownHostsFile={tmp_path / 'known_hosts'}" in config
+
+
+def test_the_generated_config_is_readable_by_a_config_parser(
+    tmp_path: Path,
+) -> None:
+    # Ansible reads this with configparser and hands ssh_args to ssh. A
+    # continuation line would put a newline inside the value, which is the kind
+    # of mistake that only shows up against a real machine.
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.seapath_setup_main",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+        )
+    )
+
+    parser = configparser.ConfigParser()
+    parser.read(preparation.config_file)
+
+    ssh_args = parser["ssh_connection"]["ssh_args"]
+    assert "\n" not in ssh_args
+    assert ssh_args.startswith(f"-o UserKnownHostsFile={tmp_path / 'known_hosts'}")
+    assert parser["defaults"]["gathering"] == "explicit"
+    assert parser["tags"]["skip"] == "package-install"
+
+
+def test_the_command_never_narrows_the_hosts(tmp_path: Path) -> None:
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.cluster_setup_ha",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+        )
+    )
+
+    # Which hosts a playbook plays against is a property of the playbook.
+    # cluster_setup_ha on one member of three is not a smaller cluster.
+    assert "--limit" not in preparation.command
+    assert preparation.command[-1] == "seapath.ansible.cluster_setup_ha"
+
+
+def test_check_mode_and_declared_variables_reach_the_command(tmp_path: Path) -> None:
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.seapath_setup_main",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+            extra_vars={"skip_reboot_setup": True},
+            check=True,
+        )
+    )
+
+    assert "--check" in preparation.command
+    assert "skip_reboot_setup=true" in preparation.command
+
+
+def test_the_private_key_is_a_fact_about_the_control_machine(tmp_path: Path) -> None:
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.seapath_setup_main",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+        )
+    )
+
+    # Not in the inventory, which is why the exported inventory works unchanged
+    # on a conventional control machine that has its own key.
+    assert preparation.environment["ANSIBLE_PRIVATE_KEY_FILE"] == str(tmp_path / "key")
+
+
+# The event mapping
+
+
+def test_events_become_progress() -> None:
+    run_progress = RunProgress()
+    for event in fake.successful_run():
+        apply_event(run_progress, event)
+
+    assert run_progress.play == "Import seapath_setup_network playbook"
+    assert run_progress.tasks_started == 2
+    assert run_progress.final_status_seen is True
+    host = run_progress.hosts["seapath-machine"]
+    assert (host.ok, host.changed, host.failed) == (2, 1, 0)
+
+
+def test_a_failure_keeps_the_reason() -> None:
+    summaries = [summarise(event) for event in fake.failed_run()]
+    failure = next(s for s in summaries if s and s.get("outcome") == "failed")
+
+    assert failure["message"] == "eno1 does not exist"
+    assert failure["host"] == "seapath-machine"
+
+
+def test_the_stream_is_a_reduction_not_a_passthrough() -> None:
+    # The raw stream carries the full result of every task on every host, which
+    # is megabytes nobody reads and a place for a secret to leak into a browser.
+    summary = summarise(
+        {
+            "event": "runner_on_ok",
+            "event_data": {
+                "host": "node1",
+                "task": "Install the corosync authkey",
+                "res": {"changed": True, "content": "a secret nobody should see"},
+            },
+        }
+    )
+
+    assert summary == {
+        "kind": "result",
+        "host": "node1",
+        "task": "Install the corosync authkey",
+        "outcome": "changed",
+        "message": None,
+    }
+
+
+def test_an_interrupted_stream_never_reports_a_final_status() -> None:
+    run_progress = RunProgress()
+    for event in fake.interrupted_run():
+        apply_event(run_progress, event)
+
+    assert run_progress.final_status_seen is False
+
+
+# Running
+
+
+def test_a_successful_run_is_recorded_with_its_reproducibility_pair(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    record = wait_for(service, service.launch("seapath_setup_main", "alice").id)
+
+    assert record.state is RunState.SUCCESS
+    assert record.launched_by == "alice"
+    # "Which version of the desired state is this machine running, and which
+    # version of the code read it" has an answer.
+    assert record.inventory_commit == inventory.state().commit
+    assert record.collection_version == "2.0.0"
+
+
+def test_the_inventory_used_is_frozen_with_the_run(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+    record = wait_for(service, service.launch("seapath_setup_main", "alice").id)
+
+    # The repository can move on without making the trace a lie.
+    assert "seapath-machine" in store.inventory_of(record.id)
+
+
+def test_a_failing_host_fails_the_run(store, inventory, trust, tmp_path) -> None:
+    service = build(
+        store,
+        inventory,
+        trust,
+        fake.FakeRunAdapter(events=fake.failed_run(), return_code=2),
+        tmp_path,
+    )
+
+    record = wait_for(service, service.launch("seapath_setup_main", "alice").id)
+
+    assert record.state is RunState.FAILED
+    assert "any_errors_fatal" in record.message
+
+
+def test_a_run_without_a_final_status_is_interrupted_not_failed(
+    store, inventory, trust, tmp_path
+) -> None:
+    # The machine rebooted under the playbook, which is what
+    # seapath_setup_hardening.yaml does on every host by design.
+    service = build(
+        store,
+        inventory,
+        trust,
+        fake.FakeRunAdapter(events=fake.interrupted_run(), return_code=4),
+        tmp_path,
+    )
+
+    record = wait_for(service, service.launch("seapath_setup_main", "alice").id)
+
+    assert record.state is RunState.INTERRUPTED
+    assert "Relaunching" in record.message
+    assert "seapath-machine" in record.message
+
+
+def test_the_lock_serialises_two_operators(store, inventory, trust, tmp_path) -> None:
+    store.acquire("an-earlier-run")
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    with pytest.raises(ApiError) as failure:
+        service.launch("seapath_setup_main", "bob")
+
+    assert failure.value.code == "run_in_progress"
+    assert "an-earlier-run" in failure.value.message
+
+
+def test_the_lock_is_released_when_a_run_ends(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+    wait_for(service, service.launch("seapath_setup_main", "alice").id)
+
+    # A lock nobody releases is a node that can never converge again.
+    store.acquire("a-later-run")
+
+
+def test_a_restart_closes_out_a_run_that_was_going(store) -> None:
+    from app.runs.models import RunRecord
+
+    store.create(
+        RunRecord(
+            id="20260811T090000",
+            playbook="seapath.ansible.seapath_setup_main",
+            playbook_id="seapath_setup_main",
+            state=RunState.RUNNING,
+            launched_by="alice",
+        ),
+        inventory="all: {}\n",
+    )
+    store.acquire("20260811T090000")
+
+    recovered = store.reconcile()
+
+    assert [record.state for record in recovered] == [RunState.INTERRUPTED]
+    assert "restarted" in recovered[0].message
+    # And the lock is freed, or the node could never converge again.
+    store.acquire("a-later-run")
+
+
+def test_a_second_acquire_is_refused(store) -> None:
+    store.acquire("one")
+
+    with pytest.raises(RunLocked, match="one"):
+        store.acquire("two")
+
+
+# Preconditions and variables
+
+
+def test_a_playbook_outside_the_catalogue_is_refused(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    with pytest.raises(ApiError) as failure:
+        service.launch("rm_minus_rf", "alice")
+
+    assert failure.value.status_code == 404
+
+
+def test_a_cluster_playbook_is_refused_on_a_standalone_machine(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    with pytest.raises(ApiError) as failure:
+        service.launch("cluster_setup_ha", "alice")
+
+    # Named, never a bare 400: the operator has to know which condition to
+    # satisfy.
+    assert failure.value.status_code == 409
+    assert "not part of a cluster" in failure.value.message
+
+
+def test_a_run_without_self_trust_is_refused(store, inventory, tmp_path) -> None:
+    ssh_home = tmp_path / "empty/.ssh"
+    ssh_home.mkdir(parents=True)
+    (ssh_home / "authorized_keys").write_text("")
+    trust = TrustService(
+        ssh_dir=tmp_path / "unused/ssh",
+        authorized_keys_file=ssh_home / "authorized_keys",
+    )
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    with pytest.raises(ApiError) as failure:
+        service.launch("seapath_setup_main", "alice")
+
+    assert "no SSH trust with itself" in failure.value.message
+
+
+def test_an_undeclared_variable_is_refused(store, inventory, trust, tmp_path) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+
+    # A free form extra vars field is a tag selector wearing a different hat.
+    with pytest.raises(ApiError) as failure:
+        service.launch(
+            "seapath_setup_main", "alice", variables={"ansible_user": "root"}
+        )
+
+    assert failure.value.code == "unknown_variable"
+
+
+def test_a_required_variable_must_be_supplied(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+    # Bypass the cluster precondition to reach the variable check.
+    entry = catalogue.get("cluster_remove_machine")
+
+    with pytest.raises(ApiError) as failure:
+        service._accepted_variables(entry, {})
+
+    assert failure.value.code == "missing_variable"
+
+
+def test_a_playbook_that_cannot_be_previewed_offers_no_preview(
+    store, inventory, trust, tmp_path
+) -> None:
+    assert catalogue.get("cluster_setup_ha").previewable is False
+    assert catalogue.get("seapath_setup_timemaster").previewable is True
+
+
+def test_the_catalogue_reports_why_an_entry_is_not_offered(
+    store, inventory, trust, tmp_path
+) -> None:
+    service = build(store, inventory, trust, fake.FakeRunAdapter(), tmp_path)
+    by_id = {item.entry.id: item for item in service.playbooks()}
+
+    assert by_id["seapath_setup_main"].available is True
+    assert by_id["cluster_setup_ha"].available is False
+    assert by_id["cluster_setup_ha"].unmet
+
+
+def test_an_entry_the_shipped_collection_lacks_is_explained_not_offered(
+    store, inventory, trust, tmp_path
+) -> None:
+    # The catalogue and seapath-ansible are released separately, so a SEAPATH
+    # release can add or rename a playbook under this service. An entry the
+    # image does not carry must not be a button that fails at the first task.
+    service = RunService(
+        store=store,
+        adapter=fake.FakeRunAdapter(),
+        inventory=inventory,
+        trust=trust,
+        paths=RunPaths(
+            collections_path=write_fake_collection(
+                tmp_path / "partial", entries=["seapath_setup_network"]
+            ),
+            private_key_file=tmp_path / "state/ssh/id_ed25519_self",
+            known_hosts_file=tmp_path / "state/ssh/known_hosts",
+        ),
+        hostname="seapath-machine",
+        collection_version="1.9.0",
+    )
+    by_id = {item.entry.id: item for item in service.playbooks()}
+
+    assert by_id["seapath_setup_network"].available is True
+    assert by_id["seapath_setup_main"].available is False
+    assert "not in the SEAPATH collection this image ships" in (
+        by_id["seapath_setup_main"].unmet[0]
+    )
+    assert "1.9.0" in by_id["seapath_setup_main"].unmet[0]
+
+    with pytest.raises(ApiError) as failure:
+        service.launch("seapath_setup_main", "alice")
+
+    assert failure.value.status_code == 409

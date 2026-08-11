@@ -26,6 +26,7 @@ from app.core.auth import (
     RoleDirectory,
     UnixGroupDirectory,
 )
+from app.core.bootstrap import run_startup_tasks
 from app.core.errors import install_error_handlers
 from app.core.logging import configure_logging
 from app.core.security import CsrfMiddleware
@@ -33,9 +34,15 @@ from app.core.sessions import SessionStore
 from app.core.settings import Settings, get_settings
 from app.core.tls import ensure_session_secret
 from app.hosts.fake import FakeHostReader
-from app.hosts.local import LocalHostReader
+from app.hosts.local import LocalHostReader, read_hostname
 from app.hosts.reader import HostReader
+from app.inventory.repository import InventoryRepository
+from app.inventory.service import InventoryService
+from app.runs.adapter import AnsibleRunnerAdapter, RunAdapter
+from app.runs.service import RunPaths, RunService
+from app.runs.store import RunStore
 from app.services.node import NodeService
+from app.trust.service import TrustService
 from app.ui import routes as ui_routes
 
 logger = logging.getLogger(__name__)
@@ -56,8 +63,31 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         __version__,
         settings.collection_version,
     )
+    # Trust, host keys, the seed inventory and the recovery of runs that were
+    # going when the service stopped. Each is idempotent and none may prevent
+    # the service from answering: an operator whose node cannot converge needs
+    # the UI in order to find out why.
+    run_startup_tasks(
+        hostname=app.state.node_hostname,
+        reader=app.state.reader,
+        trust=app.state.trust_service,
+        inventory=app.state.inventory_service,
+        runs=app.state.run_service,
+        settings=settings,
+    )
     yield
     logger.info("seapath-webui stopping")
+
+
+def _default_run_adapter(settings: Settings) -> RunAdapter:
+    if settings.use_fakes:
+        # The development switch has to cover the run adapter too. A service
+        # serving invented readings that nonetheless launched a real
+        # convergence would be the worst of both.
+        from app.runs.fake import FakeRunAdapter
+
+        return FakeRunAdapter()
+    return AnsibleRunnerAdapter()
 
 
 def create_app(
@@ -66,6 +96,7 @@ def create_app(
     authenticator: Authenticator | None = None,
     role_directory: RoleDirectory | None = None,
     session_secret: bytes | None = None,
+    run_adapter: RunAdapter | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -113,6 +144,34 @@ def create_app(
         ttl_seconds=settings.session_ttl_seconds,
     )
     app.state.node_service = NodeService(reader, settings.collection_version)
+
+    # The node's own name, from the mounted /etc/hostname rather than from this
+    # container's UTS namespace. It is the inventory host key, the name in the
+    # trust relation, and what an operator recognises.
+    hostname = read_hostname(settings.host_root)
+    app.state.node_hostname = hostname
+
+    app.state.trust_service = TrustService(
+        ssh_dir=settings.ssh_dir,
+        authorized_keys_file=settings.authorized_keys_file,
+        ansible_user=settings.ansible_user,
+    )
+    app.state.inventory_service = InventoryService(
+        InventoryRepository(settings.inventory_dir), reader
+    )
+    app.state.run_service = RunService(
+        store=RunStore(settings.runs_dir),
+        adapter=run_adapter or _default_run_adapter(settings),
+        inventory=app.state.inventory_service,
+        trust=app.state.trust_service,
+        paths=RunPaths(
+            collections_path=settings.collections_path,
+            private_key_file=settings.self_private_key_file,
+            known_hosts_file=settings.known_hosts_file,
+        ),
+        hostname=hostname,
+        collection_version=settings.collection_version,
+    )
 
     install_error_handlers(app)
     app.add_middleware(CsrfMiddleware)

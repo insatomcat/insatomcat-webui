@@ -1,0 +1,159 @@
+{#
+Copyright (C) 2026, RTE (http://www.rte-france.com)
+SPDX-License-Identifier: Apache-2.0
+#}
+{% extends "base.html" %}
+{% block title %}Configuration - SEAPATH{% endblock %}
+
+{% block body %}
+<main class="page single">
+  <p class="banner" id="banner" hidden></p>
+
+  <section class="card">
+    <h2>Desired state</h2>
+    <p class="lead">
+      This form edits the inventory. Nothing here touches the machine: saving
+      makes a commit, and applying runs the SEAPATH playbooks against it.
+    </p>
+    <dl id="repo-summary"></dl>
+  </section>
+
+  <form class="card" id="node-form">
+    <h2>Machine</h2>
+
+    <div class="field">
+      <label for="ansible_host">Administration address</label>
+      <input id="ansible_host" name="ansible_host" required>
+      <p class="help">
+        The address this machine answers on, or the one the network
+        configuration is about to give it. Declaring an address it does not
+        have yet is normal at commissioning.
+      </p>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label for="network_interface">Administration interface</label>
+        <select id="network_interface" name="network_interface" required></select>
+      </div>
+      <div class="field">
+        <label for="subnet">Prefix length</label>
+        <input id="subnet" name="subnet" type="number" min="1" max="32" required>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="field">
+        <label for="gateway_addr">Gateway</label>
+        <input id="gateway_addr" name="gateway_addr">
+      </div>
+      <div class="field">
+        <label for="dns_servers">DNS servers</label>
+        <input id="dns_servers" name="dns_servers" placeholder="one per comma">
+      </div>
+    </div>
+
+    <h3>Time</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label for="ptp_interface">PTP interface</label>
+        <select id="ptp_interface" name="ptp_interface"></select>
+        <p class="help">
+          The interface receiving PTP frames. Discovery cannot know which one
+          that is: it is a cabling fact, not something the machine can observe.
+        </p>
+      </div>
+      <div class="field">
+        <label for="ptp_domain_number">PTP domain</label>
+        <input id="ptp_domain_number" name="ptp_domain_number" type="number"
+               min="0" max="255">
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="ntp_servers">NTP servers</label>
+      <input id="ntp_servers" name="ntp_servers" placeholder="one per comma">
+      <p class="help">The fallback if PTP is lost.</p>
+    </div>
+
+    <h3>Accounts</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label for="admin_user">Administrator account</label>
+        <input id="admin_user" name="admin_user">
+      </div>
+      <div class="field">
+        <label for="grub_password_plain">GRUB password</label>
+        <input id="grub_password_plain" name="grub_password_plain"
+               type="password" autocomplete="new-password">
+        <p class="help">
+          Hashed before it is written. The inventory is in git, so a password
+          in clear would be in the audit trail forever. Leave empty to keep the
+          current one.
+        </p>
+      </div>
+    </div>
+
+    <details class="expert">
+      <summary>Real time (expert)</summary>
+      <p class="warning">
+        Latency is the product. These fields change the guarantees the machine
+        makes to the protection functions running on it.
+      </p>
+      <div class="field">
+        <label for="isolcpus">Isolated CPUs</label>
+        <input id="isolcpus" name="isolcpus" placeholder="4-7">
+        <p class="help" id="isolcpus-help"></p>
+      </div>
+    </details>
+
+    <p class="error" id="form-error" hidden></p>
+    <div class="actions">
+      <button type="button" id="preview">Show what would change</button>
+      <button type="submit" id="save">Save to the inventory</button>
+    </div>
+  </form>
+
+  <section class="card" id="diff-card" hidden>
+    <h2>Pending change</h2>
+    <pre class="diff" id="diff"></pre>
+  </section>
+
+  <section class="card">
+    <h2>Apply</h2>
+    <p class="lead" id="apply-lead"></p>
+    <div id="playbooks"></div>
+  </section>
+
+  <section class="card">
+    <h2>History</h2>
+    <table id="history-table">
+      <thead>
+        <tr><th>When</th><th>Who</th><th>Change</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<div class="modal" id="confirm" hidden>
+  <div class="modal-body">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-disruption"></p>
+    <p class="warning" id="confirm-reboot" hidden></p>
+    <label class="field">
+      <span>Type <code id="confirm-name"></code> to confirm</span>
+      <input id="confirm-input" autocomplete="off">
+    </label>
+    <p class="error" id="confirm-error" hidden></p>
+    <div class="actions">
+      <button type="button" id="confirm-cancel" class="secondary">Cancel</button>
+      <button type="button" id="confirm-go" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/setup.js"></script>
+{% endblock %}

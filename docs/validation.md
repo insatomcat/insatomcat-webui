@@ -66,3 +66,36 @@ looking value.
 
 Not yet run. Fill in the table and name the machine, the SEAPATH release and
 the date.
+
+## M1
+
+M1 is the first milestone that changes a machine, so the checklist is mostly
+about the two things a laptop cannot rehearse: SSH to the local machine, and a
+playbook that reboots the host running it.
+
+### Checklist
+
+| # | Check | Why it cannot be tested against a fake | Result |
+|---|---|---|---|
+| 1 | After the first start, `/home/ansible/.ssh/authorized_keys` still holds the ISO's site key, with one line appended | The suite proves the editing; only a real ISO proves the file it starts from | |
+| 2 | `ssh -i /etc/seapath/webui/ssh/id_ed25519_self ansible@<ip_addr> true` succeeds from inside the container, with no prompt | The whole self trust: the key, the `from=` restriction, and the `known_hosts` read from `/etc/ssh` | |
+| 3 | The seed inventory describes this machine correctly: address, interface, prefix, gateway | Discovery against a real `ip -j addr` and a real default route | |
+| 4 | Filling the form and saving produces a commit whose author is the operator, visible in `git -C /etc/seapath/inventory log` | | |
+| 5 | Exporting the inventory, then running `seapath_setup_main.yaml` from a conventional Ansible control machine, reports **no change** | **The acceptance criterion that matters.** If it fails, something configured a machine behind Ansible's back | |
+| 6 | A preview run (`check: true`) of `seapath_setup_main.yaml` completes and changes nothing | Check mode against real roles | |
+| 7 | A real `seapath_setup_main.yaml` with "converge without rebooting" succeeds, and the node view keeps saying the machine has not rebooted | | |
+| 8 | A real `seapath_setup_main.yaml` **with** the reboot ends as `interrupted`, not `failed`, and the run view offers to relaunch | The case the whole interruption design exists for, and the one no fake can produce | |
+| 9 | Relaunching after that reboot succeeds and reports mostly unchanged tasks | Idempotence is the recovery story | |
+| 10 | The artefacts under `/var/lib/seapath-webui/runs/<id>/` survive the reboot, event stream included | Written as the run progresses, never buffered | |
+| 11 | After the reboot, the service marks the interrupted run closed and the run lock is free | A lock nobody releases is a node that can never converge again | |
+| 12 | Cockpit still works after the run, meaning `deploy_cockpit_plugins` found its archives | The `build_ignore` problem: without the image's restore step this task fails and takes the run with it | |
+| 13 | `GET /playbooks` marks as unavailable any entry the shipped collection does not carry, naming the collection version | Depends on what the image was built from | |
+| 14 | The administration address changed through the form, then applied, leaves the self trust working after the reboot | The `from=` repair at startup | |
+| 15 | `cyclictest` on the isolated CPUs is unchanged with a run in progress | A convergence must not disturb a running guest | |
+
+Check 5 is the one that decides whether the milestone is real. Everything else
+can pass while the product claim is false.
+
+### Result
+
+Not yet run.

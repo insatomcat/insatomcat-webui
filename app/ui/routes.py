@@ -31,18 +31,31 @@ def install(app: FastAPI) -> None:
         name="static",
     )
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index(request: Request):
+    def _page(request: Request, template: str, page: str):
         if current_session(request) is None:
             return RedirectResponse("/login", status_code=303)
         return templates.TemplateResponse(
-            request, "node.html", {"version": __version__}
+            request,
+            template,
+            {"version": __version__, "page": page, "nav": True},
         )
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index(request: Request):
+        return _page(request, "node.html", "node")
+
+    @app.get("/setup", response_class=HTMLResponse, include_in_schema=False)
+    def setup(request: Request):
+        return _page(request, "setup.html", "setup")
+
+    @app.get("/runs", response_class=HTMLResponse, include_in_schema=False)
+    def runs(request: Request):
+        return _page(request, "runs.html", "runs")
 
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     def login(request: Request):
         if current_session(request) is not None:
             return RedirectResponse("/", status_code=303)
         return templates.TemplateResponse(
-            request, "login.html", {"version": __version__}
+            request, "login.html", {"version": __version__, "nav": False}
         )

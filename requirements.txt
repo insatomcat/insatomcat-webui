@@ -15,6 +15,12 @@ cryptography==44.0.0
 # The inventory is YAML, and it is the product.
 pyyaml==6.0.2
 
+# The configuration plane. ansible-core is pinned to the version prepare.sh
+# enforces in seapath-ansible: an image carrying a different one runs playbooks
+# against a version they were never tested with.
+ansible-core~=2.16.0
+ansible-runner==2.4.1
+
 # PAM authentication against the local Unix accounts. Imports as `pam`.
 # `six` is an undeclared dependency of python-pam 2.0.2: without it the import
 # fails, and a service that cannot import PAM refuses every password while

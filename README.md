@@ -33,14 +33,17 @@ the UI runs is what the CI tests.
 
 ## Status
 
-**M0**: skeleton, PAM authentication with sessions and CSRF, TLS material
-generated at first boot, the read only node view and its API, the image, the
-quadlet and the test harness. Nothing is written to a host.
+**M1**, pending validation on real hardware. A machine installed from the ISO
+provisions its own SSH trust, describes itself into a git inventory, and is
+configured from a browser with no Ansible control machine anywhere: guided
+forms edit the inventory, and the upstream playbooks are run with
+`ansible-runner` from the collection built into the image.
 
-M1, next, makes a machine configurable from a browser with no Ansible control
-machine: self trust at first boot, hardware discovery, the inventory
-repository, guided forms, `ansible-runner`, and `seapath_setup_main.yaml`
-applied to the local machine.
+**M0** before it: skeleton, PAM authentication with sessions and CSRF, TLS
+material generated at first boot, the read only node view and its API, the
+image, the quadlet and the test harness.
+
+M2, next, is the VM runtime plane through `vm_manager`.
 
 ## Development
 

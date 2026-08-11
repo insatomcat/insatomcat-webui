@@ -331,3 +331,300 @@ td button {
 .footer-note {
   margin-left: auto;
 }
+
+/* Navigation, shared by every signed in page */
+
+.nav {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: 1rem;
+}
+
+.nav a {
+  padding: 0.25rem 0.6rem;
+  border-radius: 4px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.nav a:hover {
+  color: var(--text);
+}
+
+.nav a.current {
+  background: rgba(74, 158, 255, 0.12);
+  color: var(--accent);
+}
+
+.page.single {
+  grid-template-columns: minmax(0, 62rem);
+  justify-content: center;
+}
+
+.page.split {
+  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  align-items: start;
+}
+
+.lead {
+  margin: 0 0 1rem;
+  color: var(--muted);
+}
+
+/* Forms */
+
+h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label,
+.field > span {
+  display: block;
+  margin-bottom: 0.25rem;
+  color: var(--muted);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.field input:disabled,
+.field select:disabled {
+  opacity: 0.6;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1rem;
+}
+
+.help {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+/* The expert section is collapsed by default. The rule is that the UI never
+   makes a real-time relevant change look routine. */
+.expert {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--isolated);
+  border-radius: 6px;
+}
+
+.expert summary {
+  color: var(--isolated);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.warning {
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  background: rgba(217, 164, 65, 0.1);
+  border-left: 3px solid var(--warn);
+  color: #eccd93;
+  font-size: 0.85rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+button.secondary {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.button-link {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.diff {
+  max-height: 22rem;
+  padding: 0.75rem;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem;
+  white-space: pre;
+}
+
+/* Playbooks */
+
+.playbook {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(38, 49, 64, 0.6);
+}
+
+.playbook:last-child {
+  border-bottom: none;
+}
+
+.playbook.unavailable {
+  opacity: 0.55;
+}
+
+.playbook-title {
+  font-weight: 600;
+}
+
+.tag.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* The confirmation, which names the machine and makes it be typed out */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 9, 13, 0.75);
+  z-index: 10;
+}
+
+.modal-body {
+  width: min(34rem, 92vw);
+  padding: 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.modal-body h2 {
+  margin-top: 0;
+}
+
+/* Runs */
+
+.run-list {
+  max-height: 70vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.run {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  gap: 0.2rem 0.5rem;
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.run:hover {
+  background: rgba(74, 158, 255, 0.07);
+}
+
+.run.current {
+  background: rgba(74, 158, 255, 0.14);
+}
+
+.run .when {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.run-list .empty {
+  padding: 0.5rem;
+  color: var(--muted);
+}
+
+.state-success {
+  color: var(--ok);
+}
+
+.state-running,
+.state-pending {
+  color: var(--accent);
+}
+
+.state-interrupted {
+  color: var(--warn);
+}
+
+.state-cancelled {
+  color: var(--muted);
+}
+
+.progress {
+  display: flex;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-radius: 4px;
+}
+
+.progress .play {
+  color: var(--muted);
+}
+
+.stream {
+  max-height: 26rem;
+  margin-top: 0.5rem;
+  padding: 0.6rem;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.stream-line {
+  white-space: pre-wrap;
+}
+
+.stream-play,
+.stream-task {
+  margin-top: 0.4rem;
+  color: var(--accent);
+}
+
+.outcome-changed {
+  color: var(--warn);
+}
+
+.outcome-failed,
+.outcome-unreachable {
+  color: var(--bad);
+}
+
+.outcome-skipped {
+  color: var(--muted);
+}
+
+.stream-reason {
+  padding-left: 2rem;
+  color: var(--bad);
+}

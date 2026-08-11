@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     # container, a fixture tree in the tests.
     host_root: Path = Path("/")
 
+    # The inventory repository, separate from the service state so it can be
+    # backed up, cloned and exported on its own.
+    inventory_dir: Path = Path("/etc/seapath/inventory")
+    # Run artefacts, written as a run progresses.
+    runs_dir: Path = Path("/var/lib/seapath-webui/runs")
+    # Where the image installed the seapath.ansible collection.
+    collections_path: Path = Path("/opt/ansible/collections")
+    # The host's sshd configuration, read only, for its public host keys.
+    ssh_config_dir: Path = Path("/etc/ssh")
+
     # The account every Ansible connection targets, including the connection to
     # this very machine. It must match `ansible_user` in the inventory, and the
     # reference inventories say `ansible`. The service never creates it.
@@ -104,6 +114,14 @@ class Settings(BaseSettings):
     @property
     def authorized_keys_file(self) -> Path:
         return self.ansible_ssh_dir / "authorized_keys"
+
+    @property
+    def self_private_key_file(self) -> Path:
+        return self.ssh_dir / "id_ed25519_self"
+
+    @property
+    def known_hosts_file(self) -> Path:
+        return self.ssh_dir / "known_hosts"
 
 
 @lru_cache

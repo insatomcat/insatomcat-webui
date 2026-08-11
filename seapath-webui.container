@@ -35,10 +35,16 @@ Volume=/var/lib/seapath-webui:/var/lib/seapath-webui:rw
 Volume=/home/ansible/.ssh:/home/ansible/.ssh:rw
 
 # Node identity. The container has its own UTS namespace, so without these the
-# view would show a container id instead of the machine's name.
+# view would show a container id instead of the machine's name, and the
+# certificate would be issued to one.
 Volume=/etc/hostname:/etc/hostname:ro
 Volume=/etc/os-release:/etc/os-release:ro
 Volume=/etc/machine-id:/etc/machine-id:ro
+
+# The machine's public SSH host keys. Read off the filesystem so the first SSH
+# connection is verified without prompting and without accepting an unverified
+# key. No network is involved, so there is nothing to intercept.
+Volume=/etc/ssh:/etc/ssh:ro
 
 # Read only views.
 # /proc is deliberately not mounted: uptime, cpuinfo, cmdline, stat and, with

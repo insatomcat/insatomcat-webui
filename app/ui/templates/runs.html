@@ -1,0 +1,62 @@
+{#
+Copyright (C) 2026, RTE (http://www.rte-france.com)
+SPDX-License-Identifier: Apache-2.0
+#}
+{% extends "base.html" %}
+{% block title %}Runs - SEAPATH{% endblock %}
+
+{% block body %}
+<main class="page split">
+  <section class="card runs-list">
+    <h2>History</h2>
+    <ul id="run-list" class="run-list"></ul>
+  </section>
+
+  <section class="card run-detail" id="run-detail" hidden>
+    <h2 id="run-title"></h2>
+    <p class="banner" id="run-message" hidden></p>
+    <dl id="run-summary"></dl>
+
+    <div class="progress">
+      <span id="run-play" class="play"></span>
+      <span id="run-task" class="task"></span>
+    </div>
+
+    <table id="hosts-table">
+      <thead>
+        <tr><th>Host</th><th>ok</th><th>changed</th><th>failed</th><th>unreachable</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <div class="actions">
+      <button type="button" id="relaunch" hidden>Relaunch</button>
+      <button type="button" id="cancel" class="secondary" hidden>Cancel</button>
+      <a id="download-log" class="button-link" href="#">Download the log</a>
+    </div>
+
+    <h3>Task stream</h3>
+    <div class="stream" id="stream"></div>
+  </section>
+</main>
+
+<div class="modal" id="confirm" hidden>
+  <div class="modal-body">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-disruption"></p>
+    <label class="field">
+      <span>Type <code id="confirm-name"></code> to confirm</span>
+      <input id="confirm-input" autocomplete="off">
+    </label>
+    <p class="error" id="confirm-error" hidden></p>
+    <div class="actions">
+      <button type="button" id="confirm-cancel" class="secondary">Cancel</button>
+      <button type="button" id="confirm-go" disabled>Relaunch</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/runs.js"></script>
+{% endblock %}

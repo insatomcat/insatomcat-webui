@@ -106,7 +106,35 @@ launching:
 Never silently set `skip_reboot_setup`. A machine that believes it is converged
 and is not is worse than one that rebooted at an inconvenient time.
 
-## 6. Ordering
+## 6. The catalogue and the collection move separately
+
+An entry names a playbook in a collection released on its own schedule. Two
+things follow, both found by building the image rather than by reading the
+repository:
+
+- **The catalogue is checked against the shipped collection.** Every entry whose
+  playbook is absent from `/opt/ansible/collections` is reported unavailable,
+  naming the collection version, instead of being offered as a button that
+  fails at the first task. `seapath_setup_prometheus_exporters` and
+  `seapath_setup_deploy_seapath_alloc` are exactly this case today: they exist
+  on a feature branch of `seapath-ansible` and not on `main`.
+- **`galaxy.yml` decides what a playbook can actually reach.** Its `build_ignore`
+  list is matched against whole relative paths, so `"*.tar.gz"` strips
+  `roles/deploy_cockpit_plugins/files/*.tar.gz` along with any archive at the
+  root. `deploy_cockpit_plugins` unarchives precisely those two files and
+  `seapath_setup_main.yaml` imports it on every distribution except Yocto, so
+  an unmodified collection cannot commission a machine that has Cockpit, which
+  is every machine installed from the SEAPATH ISO. `any_errors_fatal` then
+  takes the whole run down. The image restores the two archives after
+  installing the collection. It changes no role, and it should go away once
+  `build_ignore` narrows the pattern.
+
+`prepare.sh` has a related ordering problem: it installs the local collection
+**before** updating the git submodules, so the installed copy carries an empty
+`roles/deploy_cukinia/files/cukinia`. The image installs the collection a second
+time, after `prepare.sh`, which is enough.
+
+## 7. Ordering
 
 The UI does not invent an orchestration engine. `seapath_setup_main.yaml`
 already imports the right playbooks in the right order, and it is the entry

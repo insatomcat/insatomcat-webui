@@ -28,9 +28,37 @@ Contents:
 Each layer arrives with the milestone that uses it, so that the image never
 carries the dependency tree, or the CVEs, of something no code calls yet. M0
 ships the service and the reading tools. The Ansible layer, meaning
-`ansible-core`, the collection and the OpenSSH client, arrives at M1 with the
-run adapter. The runtime layer, `libvirt0`, `vm_manager` and the Ceph client
+`ansible-core`, the collection, `git` and the OpenSSH client, arrives at M1 with
+the run adapter. The runtime layer, `libvirt0`, `vm_manager` and the Ceph client
 libraries, arrives at M2.
+
+`git` is not incidental: the inventory repository is the configuration audit
+trail, and the service shells out to `git` for every commit, diff and revert.
+
+### Building the collection into the image
+
+A dedicated stage clones `seapath-ansible` and runs its own `prepare.sh`. No
+role is patched. Two things about that build are worth knowing, and both were
+found by running it rather than by reading it:
+
+- `prepare.sh` installs the local collection **before** it updates the git
+  submodules, so the copy it installs carries an empty
+  `roles/deploy_cukinia/files/cukinia`. The image installs the collection a
+  second time, afterwards.
+- `build_ignore` in `galaxy.yml` is matched against whole relative paths, so
+  `"*.tar.gz"` strips `roles/deploy_cockpit_plugins/files/*.tar.gz`. Those two
+  archives are what `deploy_cockpit_plugins` unarchives, and
+  `seapath_setup_main.yaml` imports that role on every distribution except
+  Yocto. Without them the commissioning run fails on any machine that has
+  Cockpit, which is every machine installed from the SEAPATH ISO. The image
+  restores the two files after installing the collection. See
+  [playbooks.md](playbooks.md).
+
+The collection version is stamped into the image with `--build-arg
+COLLECTION_VERSION`, reported by `GET /api/v1/node`, and recorded on every run
+next to the inventory commit. That pair is what makes a deployment
+reproducible, and the catalogue refuses to offer an entry the shipped
+collection does not contain.
 
 The collection version is part of the image identity. It determines which
 playbooks exist and what they do, so it is recorded at build time, reported by
@@ -81,6 +109,12 @@ starting.
   `ceph_osd_disks` is written in that form. Only the symlink directory is
   mounted, not the device tree.
 - **`/var/log/journal` and `/run/log/journal`,** for the journal tail.
+- **`/etc/ssh`, read only,** added at M1. It carries the machine's public SSH
+  host keys, and reading them off the filesystem is how the first SSH
+  connection is verified without either prompting, which hangs a run forever,
+  or `StrictHostKeyChecking=no`, which is a real man in the middle window on
+  the administration network. No network is involved, so there is nothing to
+  intercept. See [cluster-join.md](cluster-join.md).
 
 `/proc` is deliberately **not** mounted. `uptime`, `cpuinfo`, `cmdline` and
 `stat` are not namespaced, and with the host network namespace neither is

@@ -87,12 +87,9 @@
   }
 
   async function loadSummary() {
+    // The top bar is Chrome's, so this only fills the card.
     const node = await API.get("/node");
     collectWarnings(node);
-    document.getElementById("node-name").textContent = node.hostname;
-    const mode = document.getElementById("node-mode");
-    mode.textContent = node.mode;
-    mode.className = "badge badge-" + node.mode;
 
     fillList(document.getElementById("summary"), [
       ["Hostname", text(node.hostname)],
@@ -263,16 +260,10 @@
     });
   }
 
-  async function loadIdentity() {
-    const me = await API.get("/auth/me");
-    document.getElementById("identity").textContent =
-      me.username + " (" + me.role + ")";
-  }
-
   async function refresh() {
     try {
       await Promise.all([
-        loadIdentity(),
+        Chrome.load(),
         loadSummary(),
         loadCpu(),
         loadTime(),
@@ -289,11 +280,6 @@
       collectWarnings({});
     }
   }
-
-  document.getElementById("logout").addEventListener("click", async () => {
-    await API.post("/auth/logout");
-    window.location.assign("/login");
-  });
 
   refresh();
   window.setInterval(refresh, REFRESH_MS);

@@ -34,8 +34,31 @@ supervision, not for operators.
 ## Availability by milestone
 
 Implemented at **M0**: the authentication endpoints except `/auth/tokens`, and
-the whole read only node view. Everything else is specified here and arrives
-with the milestone that needs it, so the shape is settled before the code.
+the whole read only node view.
+
+Implemented at **M1**: the whole of `/inventory`, `/playbooks`, `/runs`, and
+`GET /trust/relations` with `DELETE /trust/relations/{comment}`. Everything else
+is specified here and arrives with the milestone that needs it, so the shape is
+settled before the code.
+
+Two endpoints exist that this document did not list, both added because the UI
+needed them and both read only: `POST /inventory/preview`, which returns the
+diff committing a candidate would produce without committing it, and
+`GET /playbooks`, which reports each catalogue entry together with whether this
+node can run it right now.
+
+## Roles
+
+| Action | Role |
+|---|---|
+| Read anything: node, inventory, history, runs, catalogue, trust relations | `viewer` |
+| Cancel a run | `operator` |
+| Commit an inventory change, revert, launch a run, revoke a trust relation | `admin` |
+
+Changing the inventory is an administrator's act because a commit here is a
+change to the desired state of a substation hypervisor, and the next apply
+makes it real. Launching a run is one because it restarts whatever the roles
+decide to restart.
 
 ## Authentication
 

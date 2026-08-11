@@ -167,3 +167,35 @@ A run is identified by the pair "inventory commit, collection version".
 
 If a SEAPATH release later writes a version marker on the installed system, the
 field is already there to fill.
+
+## D11 - Settled: the service ships its own ansible.cfg
+
+`galaxy.yml` lists `ansible.cfg` under `build_ignore`, so the installed
+`seapath.ansible` collection carries none of the repository's Ansible
+configuration. Running a collection playbook with Ansible's defaults would
+gather facts on every host, continue past a failed one, and install packages,
+because `gathering = explicit`, `any_errors_fatal = True` and
+`[tags] skip = package-install` all live in that file.
+
+The run adapter therefore writes an `ansible.cfg` per run, reproducing the
+settings that change **behaviour** and leaving out the ones that only change
+how a terminal looks, since `ansible-runner` owns stdout. The file is kept in
+the run's artefact directory, so what a run was configured with is as
+recoverable as what it did.
+
+The consequence for reproducibility is worth stating: a run is identified by
+the inventory commit, the collection version **and** this configuration. The
+first two are reported by the API, and the third is an artefact.
+
+## D12 - Settled: an entry the shipped collection lacks is not offered
+
+The catalogue names playbooks in a collection released on its own schedule, so
+a SEAPATH release can add or rename one underneath this service. Rather than
+discovering that at the first task of a convergence, the catalogue is checked
+against the collection installed in the image, and an entry that is not there
+is reported unavailable naming the collection version.
+
+Found by building the image: `seapath_setup_prometheus_exporters` and
+`seapath_setup_deploy_seapath_alloc` exist on a feature branch of
+`seapath-ansible` and not on `main`, so an image built from `main` correctly
+offers neither.

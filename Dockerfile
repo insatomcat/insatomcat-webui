@@ -12,39 +12,101 @@ RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 
+# The SEAPATH collection, built from the upstream repository by its own
+# prepare.sh. Nothing is patched and no role is rewritten: what this image runs
+# is what the SEAPATH CI tests.
+FROM python:3.11-slim AS collection
+
+ARG SEAPATH_ANSIBLE_REPOSITORY=https://github.com/seapath/ansible.git
+ARG SEAPATH_ANSIBLE_REF=main
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl git && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# netaddr and six are what prepare.sh checks for and what the network roles
+# use at run time.
+RUN pip install --no-cache-dir netaddr
+
+RUN git clone --branch "${SEAPATH_ANSIBLE_REF}" --depth 1 \
+        "${SEAPATH_ANSIBLE_REPOSITORY}" /src
+
+WORKDIR /src
+RUN ./prepare.sh
+
+# prepare.sh installs the local collection before it updates the git submodules
+# and fetches the Cockpit plugins, so the collection it installed is missing the
+# submodule contents. Installing it again, after those steps, brings them in.
+RUN ansible-galaxy collection install --collections-path=/src/collections --force . && \
+    mkdir -p /opt/ansible && \
+    cp -a /src/collections /opt/ansible/collections
+
+# Restore the two Cockpit plugin archives. `build_ignore` in galaxy.yml lists
+# "*.tar.gz", and ansible-galaxy matches those patterns against the whole
+# relative path, so the pattern strips
+# roles/deploy_cockpit_plugins/files/*.tar.gz as well as any archive at the
+# root. `deploy_cockpit_plugins` unarchives exactly those two files, and
+# `seapath_setup_main.yaml` imports it on every distribution except Yocto, so
+# without this the commissioning run fails on a machine that has Cockpit, which
+# is every machine installed from the SEAPATH ISO. With any_errors_fatal it
+# takes the whole run down with it.
+#
+# This restores files the packaging step dropped. It changes no role and no
+# behaviour, and it goes away when galaxy.yml narrows the pattern.
+RUN set -eu; \
+    target=/opt/ansible/collections/ansible_collections/seapath/ansible/roles/deploy_cockpit_plugins/files; \
+    mkdir -p "${target}"; \
+    cp /src/roles/deploy_cockpit_plugins/files/*.tar.gz "${target}/"; \
+    ls -l "${target}"
+
+RUN ansible-galaxy collection list --collections-path=/opt/ansible/collections
+
+
 FROM python:3.11-slim
 
-# The observation views read /proc and /sys directly, but three things are only
-# reachable through a tool:
-#   iproute2  interface addresses, which sysfs does not carry
-#   systemd   unit states and the journal, over the host's /run/systemd
-#   chrony    the time offset. Only the `chronyc` client is used: this image
-#             never runs a time daemon, the host's timemaster owns that.
+# Three groups of tools, each earning its place:
+#   git                     the inventory repository, which is the audit trail
+#   openssh-client          the configuration plane, which reaches every node
+#                           over SSH including the local one
+#   iproute2, systemd,
+#   chrony                  the three observation readings that are not in
+#                           /proc or /sys. Only the `chronyc` client is used:
+#                           this image never runs a time daemon, the host's
+#                           timemaster owns that.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
         chrony \
+        git \
         iproute2 \
         libpam-modules \
         libpam0g \
+        openssh-client \
         systemd \
     && rm -rf /var/lib/apt/lists/*
 
-# M1 adds the configuration plane to this image: ansible-core ~=2.16.0, the
-# seapath_ansible collection installed by the upstream prepare.sh, and an
-# OpenSSH client. It is deliberately absent here, because M0 runs no playbook
-# and an untested Ansible layer in the image would be dead weight carrying the
-# CVEs of a dependency tree nothing uses yet.
-
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=collection /opt/ansible/collections /opt/ansible/collections
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# netaddr is imported by the network roles at run time, not only by prepare.sh.
+RUN pip install --no-cache-dir netaddr
+
 # Reported by GET /api/v1/node, and recorded next to the inventory commit on
-# every run from M1 on. A deployment is reproducible from that pair.
+# every run. A deployment is reproducible from that pair, so it has to be
+# stamped at build time rather than guessed at.
 ARG COLLECTION_VERSION=unknown
-ENV SEAPATH_WEBUI_COLLECTION_VERSION=${COLLECTION_VERSION}
+ENV SEAPATH_WEBUI_COLLECTION_VERSION=${COLLECTION_VERSION} \
+    SEAPATH_WEBUI_COLLECTIONS_PATH=/opt/ansible/collections
+
+# M2 adds the runtime plane: libvirt0, the vm_manager package and the Ceph
+# client libraries. Absent here because M1 runs no VM operation, and an unused
+# dependency tree in an image is only its CVEs.
 
 COPY packaging/pam/seapath-webui /etc/pam.d/seapath-webui
 

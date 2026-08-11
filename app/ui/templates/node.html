@@ -6,18 +6,6 @@ SPDX-License-Identifier: Apache-2.0
 {% block title %}Node - SEAPATH{% endblock %}
 
 {% block body %}
-<header class="topbar">
-  <div class="topbar-left">
-    <span class="brand">SEAPATH</span>
-    <span id="node-name" class="node-name">...</span>
-    <span id="node-mode" class="badge">...</span>
-  </div>
-  <div class="topbar-right">
-    <span id="identity"></span>
-    <button id="logout" type="button">Sign out</button>
-  </div>
-</header>
-
 <main class="page">
   <p class="banner" id="banner" hidden></p>
 
@@ -85,6 +73,5 @@ SPDX-License-Identifier: Apache-2.0
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/api.js"></script>
 <script src="/static/node.js"></script>
 {% endblock %}

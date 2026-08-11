@@ -5,8 +5,30 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.core.auth import Role
 from app.hosts.reader import CommandResult
+from app.runs import catalogue
+
+
+def write_fake_collection(
+    collections_path: Path, entries: list[str] | None = None
+) -> Path:
+    """Lay out a `seapath.ansible` collection with empty playbook files.
+
+    The service checks that a catalogue entry exists in the collection its
+    image ships, so the tests need somewhere for it to look. Passing `entries`
+    leaves the others out, which is how the version skew case is exercised.
+    """
+    playbooks = collections_path / "ansible_collections/seapath/ansible/playbooks"
+    playbooks.mkdir(parents=True, exist_ok=True)
+    wanted = entries if entries is not None else [e.id for e in catalogue.CATALOGUE]
+    for entry in catalogue.CATALOGUE:
+        if entry.id in wanted:
+            name = entry.playbook.rsplit(".", 1)[-1]
+            (playbooks / f"{name}.yaml").write_text("---\n")
+    return collections_path
 
 
 class FakeAuthenticator:

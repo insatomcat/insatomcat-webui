@@ -21,6 +21,8 @@ from app.core.settings import Settings
 from app.hosts.fake import FakeHostReader
 from app.hosts.local import LocalHostReader
 from app.main import create_app
+from app.runs.adapter import AnsibleRunnerAdapter
+from app.runs.fake import FakeRunAdapter
 
 
 def test_a_default_service_reads_the_real_machine_and_uses_pam(
@@ -31,6 +33,7 @@ def test_a_default_service_reads_the_real_machine_and_uses_pam(
     assert isinstance(application.state.reader, LocalHostReader)
     assert isinstance(application.state.authenticator, PamAuthenticator)
     assert isinstance(application.state.role_directory, UnixGroupDirectory)
+    assert isinstance(application.state.run_service._adapter, AnsibleRunnerAdapter)
 
 
 def test_the_development_switch_replaces_both_adapters_and_the_password_check(
@@ -43,3 +46,6 @@ def test_the_development_switch_replaces_both_adapters_and_the_password_check(
     assert isinstance(application.state.reader, FakeHostReader)
     assert isinstance(application.state.authenticator, DevAuthenticator)
     assert isinstance(application.state.role_directory, DevRoleDirectory)
+    # The run adapter too. A service serving invented readings that
+    # nonetheless launched a real convergence would be the worst of both.
+    assert isinstance(application.state.run_service._adapter, FakeRunAdapter)
