@@ -14,6 +14,7 @@ import uvicorn
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.core.tls import ensure_tls_material, print_console_banner
+from app.hosts.local import read_hostname
 from app.main import create_app
 
 
@@ -21,7 +22,9 @@ def main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    tls = ensure_tls_material(settings)
+    # The node's name, not this container's: the certificate names the machine
+    # an operator is about to trust.
+    tls = ensure_tls_material(settings, hostname=read_hostname(settings.host_root))
     host = settings.bind_address if settings.bind_address != "0.0.0.0" else None
     print_console_banner(
         f"https://{host or '<node address>'}:{settings.port}/", tls.fingerprint

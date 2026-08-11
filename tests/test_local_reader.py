@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from app.hosts.local import LocalHostReader, parse_cpu_list
+from app.hosts.local import LocalHostReader, parse_cpu_list, read_hostname
 from app.hosts.models import NodeMode
 from app.hosts.reader import CommandResult
 from tests.fakes import FakeCommandRunner
@@ -113,6 +113,21 @@ def test_the_hostname_comes_from_the_host_not_the_container(
 
     assert identity.hostname == "node1"
     assert identity.warnings == []
+
+
+def test_the_certificate_names_the_node_not_the_container(host: Path) -> None:
+    # The common name of the certificate is what an operator compares against
+    # the machine they think they are talking to, and socket.gethostname()
+    # inside a container answers with a container id.
+    assert read_hostname(host) == "node1"
+
+
+def test_the_hostname_falls_back_to_this_process_when_nothing_is_mounted(
+    tmp_path: Path,
+) -> None:
+    import socket
+
+    assert read_hostname(tmp_path / "empty") == socket.gethostname()
 
 
 def test_a_missing_hostname_mount_is_called_out(tmp_path: Path) -> None:

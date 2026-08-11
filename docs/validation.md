@@ -40,6 +40,7 @@ sudo systemctl start seapath-webui
 | 1 | The container starts on a **standalone** node, where `corosync.conf`, and possibly `/etc/ceph`, do not exist | A missing bind mount source is a podman behaviour | |
 | 2 | `journalctl -u seapath-webui` shows the URL and the certificate fingerprint | The console banner is the whole trust story of the first connection | |
 | 3 | The browser reaches `https://<ip_addr>:8006/` and the certificate fingerprint matches the one on the console | | |
+| 3b | The certificate common name is the **node's** name, not a container id | The container's UTS namespace, which `Network=host` does not share | |
 | 4 | `root` signs in with the password set by the installer | D6, and no group exists yet on a machine that never converged | |
 | 5 | An account in `seapath-viewer` signs in and sees the node view; an account in no SEAPATH group is refused, naming the groups | PAM and `getgrnam` against the host's real files | |
 | 6 | The node view shows the **machine's** hostname, not a container id | `/etc/hostname` mount and the UTS namespace | |

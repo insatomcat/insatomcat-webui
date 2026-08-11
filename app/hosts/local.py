@@ -86,8 +86,6 @@ class LocalHostReader:
 
         hostname = self._read_text("etc/hostname")
         if not hostname:
-            # The container has its own UTS namespace, so its own hostname is
-            # not the node's. Say so rather than displaying a container id.
             hostname = socket.gethostname()
             warnings.append(
                 "The node hostname was read from the container, not from "
@@ -590,6 +588,22 @@ class LocalHostReader:
 
 
 # Parsing helpers, kept module level so the tests can hit them directly.
+
+
+def read_hostname(root: Path) -> str:
+    """The node's name, which is not the name this process runs under.
+
+    The container has its own UTS namespace, and `Network=host` does not share
+    it, so `socket.gethostname()` returns a container id. Anything an operator
+    reads as the machine's name has to come from the mounted `/etc/hostname`,
+    including the common name of the certificate whose fingerprint they are
+    asked to compare.
+    """
+    try:
+        hostname = (Path(root) / "etc/hostname").read_text(errors="replace").strip()
+    except (OSError, UnicodeError):
+        hostname = ""
+    return hostname or socket.gethostname()
 
 
 def parse_cpu_list(raw: str | None) -> list[int]:
