@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     # container, a fixture tree in the tests.
     host_root: Path = Path("/")
 
+    # The account every Ansible connection targets, including the connection to
+    # this very machine. It must match `ansible_user` in the inventory, and the
+    # reference inventories say `ansible`. The service never creates it.
+    ansible_user: str = "ansible"
+    # Looked up with `getent` by the Ansible role and templated into the
+    # quadlet, never hardcoded to /home/ansible on a real deployment.
+    ansible_ssh_dir: Path = Path("/home/ansible/.ssh")
+
     # Unix groups granting each role. An account in none of them, and not root,
     # is authenticated but has no access at all.
     admin_group: str = "seapath-admin"
@@ -88,6 +96,14 @@ class Settings(BaseSettings):
     @property
     def session_secret_file(self) -> Path:
         return self.state_dir / "session.secret"
+
+    @property
+    def ssh_dir(self) -> Path:
+        return self.state_dir / "ssh"
+
+    @property
+    def authorized_keys_file(self) -> Path:
+        return self.ansible_ssh_dir / "authorized_keys"
 
 
 @lru_cache

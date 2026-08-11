@@ -8,8 +8,12 @@ python-multipart==0.0.20
 pydantic==2.10.5
 pydantic-settings==2.7.1
 
-# Self signed certificate generation at first boot.
+# Self signed certificate generation at first boot, and the SSH key pairs the
+# trust is built on.
 cryptography==44.0.0
+
+# The inventory is YAML, and it is the product.
+pyyaml==6.0.2
 
 # PAM authentication against the local Unix accounts. Imports as `pam`.
 # `six` is an undeclared dependency of python-pam 2.0.2: without it the import

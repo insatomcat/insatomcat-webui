@@ -108,8 +108,31 @@ actually cabled. The form asks for the cabling order once and derives the rest.
 ### Fixed values
 
 `ansible_connection`, `ansible_python_interpreter`, `ansible_remote_tmp`,
-`ansible_user`, `hostname` and `ip_addr` are written by the UI and not editable.
-They are what makes the generated inventory equivalent to a hand written one.
+`ansible_user`, `hostname`, `ip_addr` and `apply_network_config` are written by
+the UI and not editable. They are what makes the generated inventory equivalent
+to a hand written one.
+
+Two of them are less inert than they look, and both were found by reading the
+roles rather than the examples:
+
+- `hostname` **renames the machine**. `network_buildhosts` sets the system
+  hostname from `hostname | default(inventory_hostname)`, so the host key in
+  this file is what the machine ends up called. It is not a label.
+- `apply_network_config` must be `true` and must be written.
+  `seapath_setup_network.yaml` defaults it to `false`, so an inventory that
+  omits it configures no network at all, converges cleanly, and changes
+  nothing. The standalone example sets it for exactly this reason.
+
+### Variables this service does not model
+
+They are preserved. The inventory is read back into the model on every edit,
+and anything the model does not know about is written out again untouched. A
+site that added `ceph_conf_overrides` or a variable of its own keeps it:
+silently dropping one on the next form submission would be a configuration
+change nobody asked for and nobody would see until a run behaved differently.
+
+What is not preserved is the layout. The service rewrites the file, so comments
+and ordering are its own.
 
 ## 5. Validation
 
@@ -119,13 +142,35 @@ Before a commit is accepted:
 - cross node coherence: no duplicate addresses, a ring that closes, a
   `cephadm_network` containing every `cluster_ip_addr`, an observer with no OSD
   disk;
-- reachability: `ansible_host` answers on the trust channel;
 - `ansible-inventory --list` parses the result, which catches YAML mistakes the
   schema would miss.
 
 A commit that fails validation is refused with the failing rule named. Invalid
 desired state never reaches the repository, because a broken inventory that is
 committed then applied is how a cluster dies.
+
+**Errors refuse the commit, warnings do not,** and the distinction carries
+weight. "This hypervisor has no PTP interface" is worth saying and is not worth
+refusing: it may be a machine somebody is deliberately commissioning without
+one yet. "The gateway is outside the subnet" is worth refusing, because the
+network role will apply it and the machine will lose its route.
+
+**Reachability is not a commit rule.** An earlier version of this document
+listed "`ansible_host` answers on the trust channel" among the conditions for
+accepting a commit, and that would make commissioning impossible: at
+commissioning the administration address in the inventory is frequently *not*
+the address the machine currently answers on, because
+`seapath_setup_network.yaml` is precisely what makes it true. Declaring an
+address the machine does not have yet is the normal use of an inventory, not an
+error in one. Reachability is checked as a **precondition of an apply**, where
+it names the address it could not reach, and it is offered as an explicit check
+from the inventory view.
+
+Some rules are also rules about the machine and not only about the file. `0`
+cannot be in `isolcpus`, because CPU 0 carries work the kernel cannot move and
+isolating it strands the host. `grub_password` must already be a PBKDF2 hash,
+because the inventory goes into git and a password in clear is a password in
+the audit trail forever.
 
 ## 6. Fields that touch real time
 

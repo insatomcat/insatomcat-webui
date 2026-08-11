@@ -1,0 +1,48 @@
+# SEAPATH inventory, managed by seapath-webui.
+#
+# This file is the desired state of the machines below. It is a plain Ansible
+# inventory: clone this repository onto a conventional control machine and the
+# same playbooks produce the same result.
+#
+# Every change is a commit whose author is the operator who made it, so
+# `git log` is the configuration audit trail.
+#
+# The service rewrites this file on every change. Variables it does not model
+# are read back and written out untouched, but the layout and the comments are
+# not: edit through the UI, or edit here and expect the next commit to reformat
+# what you wrote.
+---
+all:
+  hosts:
+    seapath-machine:
+      ansible_host: 192.168.200.125
+      network_interface: eno1
+      subnet: 24
+      gateway_addr: 192.168.200.1
+      dns_servers:
+        - 192.168.200.1
+      ptp_interface: eno12419
+      ptp_domain_number: 0
+      timemaster_ptp_domain_number: '{{ ptp_domain_number }}'
+      ptp_status_vsock_domain_number: '{{ ptp_domain_number }}'
+      ntp_servers:
+        - 185.254.101.25
+      admin_user: admin
+      grub_password: grub.pbkdf2.sha512.65536.AAAA.BBBB
+      hostname: '{{ inventory_hostname }}'
+      ip_addr: '{{ ansible_host }}'
+      apply_network_config: true
+      ansible_connection: ssh
+      ansible_python_interpreter: /usr/bin/python3
+      ansible_remote_tmp: /tmp/.ansible/tmp
+      ansible_user: ansible
+standalone_machine:
+  hosts:
+    seapath-machine: null
+hypervisors:
+  hosts:
+    seapath-machine: null
+  vars:
+    isolcpus: 4-7
+cluster_machines: null
+observers: null

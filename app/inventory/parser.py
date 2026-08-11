@@ -1,0 +1,138 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+"""Reading an inventory back into the model.
+
+The repository holds YAML, not a model, and that is deliberate: the file is the
+product, and a second serialisation of the same state would be a second thing
+to keep in sync. Parsing back is the price, and it has one rule that matters:
+a variable this service does not know about is kept, not dropped.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import yaml
+
+from app.inventory.model import Inventory, Mode, NodeConfig, Role
+from app.inventory.renderer import FIXED_HOST_VAR_NAMES, PTP_DOMAIN_ALIASES
+
+# The variables the model owns. Anything else found on a host lands in `extra`
+# and is written back out unchanged.
+_MODELLED = frozenset(
+    {
+        "ansible_host",
+        "network_interface",
+        "subnet",
+        "gateway_addr",
+        "dns_servers",
+        "ptp_interface",
+        "ptp_domain_number",
+        "ntp_servers",
+        "admin_user",
+        "grub_password",
+        "isolcpus",
+    }
+)
+
+
+class InvalidInventory(Exception):
+    """The file is not an inventory this service can work with."""
+
+
+def parse(document: str) -> Inventory:
+    try:
+        loaded = yaml.safe_load(document) or {}
+    except yaml.YAMLError as error:
+        raise InvalidInventory(f"The inventory is not valid YAML: {error}") from error
+    if not isinstance(loaded, dict):
+        raise InvalidInventory("The inventory must be a mapping of groups.")
+
+    hosts = _group_hosts(loaded.get("all"))
+    if not hosts:
+        raise InvalidInventory("The inventory declares no host under `all`.")
+
+    cluster_members = set(_group_host_names(loaded.get("cluster_machines")))
+    observers = set(_group_host_names(loaded.get("observers")))
+    group_isolcpus = _group_vars(loaded.get("hypervisors")).get("isolcpus")
+
+    parsed: dict[str, NodeConfig] = {}
+    for name, raw in hosts.items():
+        parsed[name] = _node(name, dict(raw or {}), observers, group_isolcpus)
+
+    return Inventory(
+        mode=Mode.CLUSTER if cluster_members else Mode.STANDALONE,
+        hosts=parsed,
+    )
+
+
+def _node(
+    name: str, variables: dict[str, Any], observers: set[str], group_isolcpus: Any
+) -> NodeConfig:
+    known = {name: variables.get(name) for name in _MODELLED if name in variables}
+    extra = {
+        name: value
+        for name, value in variables.items()
+        if name not in _MODELLED and name not in FIXED_HOST_VAR_NAMES
+        # The aliases are derived from ptp_domain_number by the renderer, so
+        # keeping them would duplicate them on the next write.
+        and name not in PTP_DOMAIN_ALIASES
+    }
+
+    dns = known.get("dns_servers")
+    ntp = known.get("ntp_servers")
+    return NodeConfig(
+        # The role is a group membership, not a variable: that is how the
+        # reference inventory expresses it, and how the playbooks read it.
+        role=Role.OBSERVER if name in observers else Role.HYPERVISOR,
+        ansible_host=str(known.get("ansible_host") or ""),
+        network_interface=str(known.get("network_interface") or ""),
+        subnet=int(known.get("subnet") or 24),
+        gateway_addr=_optional_str(known.get("gateway_addr")),
+        dns_servers=_as_list(dns),
+        ptp_interface=_optional_str(known.get("ptp_interface")),
+        ptp_domain_number=_optional_int(known.get("ptp_domain_number")),
+        ntp_servers=_as_list(ntp),
+        admin_user=_optional_str(known.get("admin_user")),
+        grub_password=_optional_str(known.get("grub_password")),
+        isolcpus=_optional_str(known.get("isolcpus", group_isolcpus)),
+        extra=extra,
+    )
+
+
+def _group_hosts(group: Any) -> dict[str, Any]:
+    if not isinstance(group, dict):
+        return {}
+    hosts = group.get("hosts")
+    return hosts if isinstance(hosts, dict) else {}
+
+
+def _group_host_names(group: Any) -> list[str]:
+    return list(_group_hosts(group))
+
+
+def _group_vars(group: Any) -> dict[str, Any]:
+    if not isinstance(group, dict):
+        return {}
+    variables = group.get("vars")
+    return variables if isinstance(variables, dict) else {}
+
+
+def _as_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
+
+
+def _optional_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
