@@ -1,0 +1,14 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+#
+# PAM stack for the web UI, shipped in the image so that authentication does
+# not depend on what the host happens to have installed under /etc/pam.d. The
+# accounts themselves are the host's: the quadlet mounts /etc/passwd,
+# /etc/group and /etc/shadow read only.
+#
+# pam_unix only. There is no session and no password change here: the service
+# verifies a password and nothing else.
+
+auth       required   pam_faildelay.so delay=2000000
+auth       required   pam_unix.so nullok_secure
+account    required   pam_unix.so

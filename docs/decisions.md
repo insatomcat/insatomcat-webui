@@ -90,6 +90,9 @@ websocket proxy into a guest.
 serial console for `operator` and above, proxied through the owning node, bound
 to the authenticated session, with a hard timeout.
 
+*Recommendation followed. Nothing is built, and the API surface has no room
+reserved for it, which is deliberate: reserving room is how scope creeps.*
+
 ## D6 - Open: first login credentials
 
 The ISO must produce a machine reachable from a browser immediately, with no
@@ -101,6 +104,12 @@ interaction with D2: this is local PAM authentication to the web service, not
 SSH, so `PermitRootLogin no` does not affect it. If hardening later forbids
 even that, fall back to a one time token printed on the console at first boot.
 
+*Recommendation followed at M0.* `root` resolves to the `admin` role without
+being a member of any group, since the groups are created by the Ansible role
+and therefore do not exist on a machine that has never converged. The behaviour
+is behind `SEAPATH_WEBUI_ALLOW_ROOT_LOGIN`, default true, so a site that has
+created real operator accounts can turn it off without a new release.
+
 ## D7 - Open: where this repository ends up
 
 The service manages SEAPATH machines and ships the SEAPATH collection. It may
@@ -109,6 +118,10 @@ belong under the SEAPATH organisation rather than as a personal project.
 **Recommendation:** develop here, keep Apache-2.0 and SPDX discipline from day
 one so upstreaming is a move rather than a relicensing, and raise it with the
 maintainers once M1 is demonstrable.
+
+*Recommendation followed.* Every source file carries an SPDX header,
+`Apache-2.0` for code and `CC-BY-4.0` for documentation, and the RTE copyright
+line the sibling repositories use. Nothing in the tree assumes this URL.
 
 ## D8 - Settled: whole playbooks, scoping later if the need is proven
 
@@ -134,3 +147,23 @@ to the podman socket, which is root on the host.
 network changes, which a sibling container does not survive either. Persisted
 artefacts plus idempotent relaunch cover the need. Revisit only if operators
 report losing runs for reasons other than a reboot.
+
+*Recommendation followed.* The quadlet asks for no podman socket, and M1 runs
+`ansible-runner` in the service process.
+
+## D10 - Settled: a node cannot report its SEAPATH version
+
+Found while implementing the node view, and it contradicted the first draft of
+[api.md](api.md). The version is written into the installation media metadata by
+`generate_seapath_metadata.py` in `seapath-build_debian_iso`, and lands nowhere
+on the installed system: `/etc/os-release` is plain Debian, and no role writes a
+version file.
+
+Rather than invent one, `GET /node` reports `seapath_version: null` and carries
+the **collection version** baked into the image at build time. That is the
+better answer anyway: what decides which playbooks exist and what they do is the
+collection this service will run, not the image the machine was installed from.
+A run is identified by the pair "inventory commit, collection version".
+
+If a SEAPATH release later writes a version marker on the installed system, the
+field is already there to fill.

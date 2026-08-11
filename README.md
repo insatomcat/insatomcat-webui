@@ -33,7 +33,30 @@ the UI runs is what the CI tests.
 
 ## Status
 
-Specification only. No code yet.
+**M0**: skeleton, PAM authentication with sessions and CSRF, TLS material
+generated at first boot, the read only node view and its API, the image, the
+quadlet and the test harness. Nothing is written to a host.
+
+M1, next, makes a machine configurable from a browser with no Ansible control
+machine: self trust at first boot, hardware discovery, the inventory
+repository, guided forms, `ansible-runner`, and `seapath_setup_main.yaml`
+applied to the local machine.
+
+## Development
+
+```bash
+python3.11 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest
+```
+
+The suite runs on a laptop with no cluster, no libvirt and no container, which
+is a property worth keeping: everything that touches a host goes through an
+adapter that has a fake. To browse the UI without a SEAPATH machine, set
+`SEAPATH_WEBUI_USE_FAKES=1`, which serves invented readings and says so in the
+log.
+
+## Documents
 
 1. [SPEC.md](SPEC.md) - principle, scope, architecture, milestones, risks.
 2. [docs/inventory.md](docs/inventory.md) - the desired state: storage, writers,
@@ -48,7 +71,9 @@ Specification only. No code yet.
 7. [docs/deployment.md](docs/deployment.md) - image, quadlet, Ansible role, ISO.
 8. [docs/decisions.md](docs/decisions.md) - settled decisions with their
    reasoning, and the open ones with a recommendation.
-9. [AGENTS.md](AGENTS.md) - conventions and definition of done.
+9. [docs/validation.md](docs/validation.md) - what has to be checked on a real
+   machine, per milestone, because the test suite deliberately cannot.
+10. [AGENTS.md](AGENTS.md) - conventions and definition of done.
 
 ## Related components
 

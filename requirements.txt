@@ -1,0 +1,19 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+jinja2==3.1.5
+python-multipart==0.0.20
+pydantic==2.10.5
+pydantic-settings==2.7.1
+
+# Self signed certificate generation at first boot.
+cryptography==44.0.0
+
+# PAM authentication against the local Unix accounts. Imports as `pam`.
+# `six` is an undeclared dependency of python-pam 2.0.2: without it the import
+# fails, and a service that cannot import PAM refuses every password while
+# looking like a machine whose operators all mistyped theirs.
+python-pam==2.0.2
+six==1.17.0

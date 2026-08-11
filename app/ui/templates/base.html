@@ -1,0 +1,24 @@
+{#
+Copyright (C) 2026, RTE (http://www.rte-france.com)
+SPDX-License-Identifier: Apache-2.0
+#}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}SEAPATH{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    {% block body %}{% endblock %}
+    <footer class="footer">
+      <span>seapath-webui {{ version }}</span>
+      <span class="footer-note">
+        This service edits the inventory and runs the SEAPATH playbooks.
+        It never configures a machine directly.
+      </span>
+    </footer>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

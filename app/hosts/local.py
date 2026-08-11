@@ -1,0 +1,684 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+"""The read only adapter as implemented against a real SEAPATH machine.
+
+Everything comes from `/proc`, `/sys` and a short list of read only commands.
+The filesystem root is a parameter so the parsers can be exercised against a
+recorded tree, which is what lets the test suite run on a laptop.
+
+Two facts about the container shape this file. The quadlet is unprivileged and
+bind mounts the host `/sys` read only, and it uses the host network namespace,
+so `/proc/net` and `/sys/class/net` describe the host. What is not visible from
+there is reported as unavailable with the reason, never guessed.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import socket
+from datetime import UTC, datetime
+from pathlib import Path
+
+from app.hosts.models import (
+    BlockDevice,
+    CpuReading,
+    CpuTopologyEntry,
+    DisksReading,
+    InterfaceAddress,
+    LogLine,
+    LogReading,
+    NetworkInterface,
+    NetworkReading,
+    NodeIdentity,
+    NodeMode,
+    PtpClock,
+    ServicesReading,
+    ServiceUnit,
+    TimeReading,
+)
+from app.hosts.reader import CommandRunner, SubprocessRunner
+
+logger = logging.getLogger(__name__)
+
+# Block devices that are never OSD candidates and only add noise to the view.
+_IGNORED_BLOCK_PREFIXES = ("loop", "ram", "zram", "sr", "dm-", "md")
+
+_SECTOR_BYTES = 512
+
+
+class LocalHostReader:
+    """Reads the local machine. Writes nothing, ever."""
+
+    def __init__(self, root: Path, runner: CommandRunner | None = None) -> None:
+        self._root = Path(root)
+        self._runner = runner or SubprocessRunner()
+        # Previous /proc/stat snapshot, so per CPU busy time is a rate between
+        # two polls rather than a meaningless number since boot.
+        self._previous_cpu_times: dict[int, tuple[int, int]] = {}
+
+    # Filesystem helpers
+
+    def _path(self, *parts: str) -> Path:
+        return self._root.joinpath(*[part.lstrip("/") for part in parts])
+
+    def _read_text(self, *parts: str) -> str | None:
+        try:
+            return self._path(*parts).read_text(errors="replace").strip()
+        except (OSError, UnicodeError):
+            return None
+
+    def _read_int(self, *parts: str) -> int | None:
+        raw = self._read_text(*parts)
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    # Node identity
+
+    def node_identity(self) -> NodeIdentity:
+        warnings: list[str] = []
+
+        hostname = self._read_text("etc/hostname")
+        if not hostname:
+            # The container has its own UTS namespace, so its own hostname is
+            # not the node's. Say so rather than displaying a container id.
+            hostname = socket.gethostname()
+            warnings.append(
+                "The node hostname was read from the container, not from "
+                "/etc/hostname. Check that the quadlet mounts it."
+            )
+
+        os_release = self._parse_os_release()
+        uptime_seconds = None
+        boot_time = None
+        raw_uptime = self._read_text("proc/uptime")
+        if raw_uptime:
+            try:
+                uptime_seconds = float(raw_uptime.split()[0])
+                boot_time = datetime.fromtimestamp(
+                    datetime.now(tz=UTC).timestamp() - uptime_seconds,
+                    tz=UTC,
+                )
+            except (ValueError, IndexError):
+                warnings.append("/proc/uptime could not be parsed.")
+
+        # The presence of a corosync configuration is what tells a cluster
+        # member from a standalone machine, and it is the same signal the other
+        # SEAPATH tooling uses. The file only appears once cluster_setup_ha.yaml
+        # has run, so its absence is the normal state of a standalone node.
+        if self._path("etc/corosync/corosync.conf").exists():
+            mode = NodeMode.CLUSTER
+        elif self._path("etc/corosync").is_dir():
+            mode = NodeMode.STANDALONE
+        else:
+            mode = NodeMode.UNKNOWN
+            warnings.append(
+                "Cluster membership is unknown: /etc/corosync is not mounted "
+                "into this container."
+            )
+
+        return NodeIdentity(
+            hostname=hostname,
+            kernel_release=self._read_text("proc/sys/kernel/osrelease"),
+            distribution=os_release.get("PRETTY_NAME"),
+            distribution_id=os_release.get("ID"),
+            distribution_version=os_release.get("VERSION_ID"),
+            uptime_seconds=uptime_seconds,
+            boot_time=boot_time,
+            mode=mode,
+            warnings=warnings,
+        )
+
+    def _parse_os_release(self) -> dict[str, str]:
+        raw = self._read_text("etc/os-release")
+        if not raw:
+            return {}
+        values: dict[str, str] = {}
+        for line in raw.splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                values[key.strip()] = value.strip().strip('"')
+        return values
+
+    # CPU
+
+    def cpu(self) -> CpuReading:
+        warnings: list[str] = []
+        base = "sys/devices/system/cpu"
+
+        present = parse_cpu_list(self._read_text(base, "present"))
+        online = parse_cpu_list(self._read_text(base, "online"))
+
+        isolated = parse_cpu_list(self._read_text(base, "isolated"))
+        isolated_source = "sysfs" if isolated else None
+        cmdline = self._read_text("proc/cmdline")
+        if not isolated and cmdline:
+            isolated = parse_cpu_list(_kernel_parameter(cmdline, "isolcpus"))
+            isolated_source = "cmdline" if isolated else None
+        if not isolated:
+            warnings.append(
+                "No isolated CPUs. On a hypervisor this usually means "
+                "seapath_setup_main.yaml has not been applied yet."
+            )
+
+        nohz_full = parse_cpu_list(self._read_text(base, "nohz_full"))
+        busy = self._cpu_busy_percent()
+
+        topology = []
+        for cpu_id in present or online:
+            topology.append(
+                CpuTopologyEntry(
+                    cpu=cpu_id,
+                    socket=self._read_int(
+                        base, f"cpu{cpu_id}/topology/physical_package_id"
+                    ),
+                    core=self._read_int(base, f"cpu{cpu_id}/topology/core_id"),
+                    online=cpu_id in online if online else True,
+                    isolated=cpu_id in isolated,
+                    busy_percent=busy.get(cpu_id),
+                )
+            )
+        if not topology:
+            warnings.append("CPU topology is not readable under /sys.")
+
+        load_average = None
+        raw_load = self._read_text("proc/loadavg")
+        if raw_load:
+            try:
+                load_average = [float(value) for value in raw_load.split()[:3]]
+            except ValueError:
+                warnings.append("/proc/loadavg could not be parsed.")
+
+        tuned_profile = self._read_text("etc/tuned/active_profile")
+        if tuned_profile is None:
+            warnings.append(
+                "The tuned profile is unknown: /etc/tuned is not mounted here."
+            )
+
+        return CpuReading(
+            model=self._cpu_model(),
+            present=len(present) or None,
+            online=len(online) or None,
+            isolated=isolated,
+            isolated_source=isolated_source,
+            nohz_full=nohz_full,
+            housekeeping=[cpu for cpu in (present or online) if cpu not in isolated],
+            tuned_profile=tuned_profile or None,
+            load_average=load_average,
+            topology=topology,
+            kernel_cmdline=cmdline,
+            warnings=warnings,
+        )
+
+    def _cpu_model(self) -> str | None:
+        raw = self._read_text("proc/cpuinfo")
+        if not raw:
+            return None
+        for line in raw.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip() in ("model name", "Model"):
+                return value.strip()
+        return None
+
+    def _cpu_busy_percent(self) -> dict[int, float]:
+        """Busy ratio per CPU between this poll and the previous one.
+
+        The first call after a start returns nothing rather than the average
+        since boot, which on a machine up for months says nothing useful.
+        """
+        raw = self._read_text("proc/stat")
+        if not raw:
+            return {}
+        current: dict[int, tuple[int, int]] = {}
+        for line in raw.splitlines():
+            if not line.startswith("cpu") or line.startswith("cpu "):
+                continue
+            fields = line.split()
+            try:
+                cpu_id = int(fields[0][3:])
+                values = [int(value) for value in fields[1:]]
+            except (ValueError, IndexError):
+                continue
+            total = sum(values)
+            idle = sum(values[3:5]) if len(values) >= 5 else values[3]
+            current[cpu_id] = (total, idle)
+
+        busy: dict[int, float] = {}
+        for cpu_id, (total, idle) in current.items():
+            previous = self._previous_cpu_times.get(cpu_id)
+            if previous is None:
+                continue
+            total_delta = total - previous[0]
+            idle_delta = idle - previous[1]
+            if total_delta > 0:
+                busy[cpu_id] = round(
+                    100.0 * (total_delta - idle_delta) / total_delta, 1
+                )
+        self._previous_cpu_times = current
+        return busy
+
+    # Network
+
+    def network(self) -> NetworkReading:
+        warnings: list[str] = []
+        addresses = self._interface_addresses(warnings)
+
+        interfaces: list[NetworkInterface] = []
+        net_root = self._path("sys/class/net")
+        try:
+            names = sorted(entry.name for entry in net_root.iterdir())
+        except OSError:
+            return NetworkReading(
+                warnings=["/sys/class/net is not readable from this container."]
+            )
+
+        for name in names:
+            device = net_root / name
+            speed = self._read_int("sys/class/net", name, "speed")
+            interfaces.append(
+                NetworkInterface(
+                    name=name,
+                    kind=_interface_kind(device),
+                    mac=self._read_text("sys/class/net", name, "address"),
+                    operstate=self._read_text("sys/class/net", name, "operstate"),
+                    carrier=_optional_bool(
+                        self._read_int("sys/class/net", name, "carrier")
+                    ),
+                    mtu=self._read_int("sys/class/net", name, "mtu"),
+                    # Virtual devices report -1, which is not a speed.
+                    speed_mbps=speed if speed and speed > 0 else None,
+                    driver=_symlink_name(device / "device" / "driver"),
+                    master=_symlink_name(device / "master"),
+                    addresses=addresses.get(name, []),
+                )
+            )
+
+        route_interface, gateway = self._default_route()
+        return NetworkReading(
+            interfaces=interfaces,
+            default_route_interface=route_interface,
+            default_gateway=gateway,
+            warnings=warnings,
+        )
+
+    def _interface_addresses(
+        self, warnings: list[str]
+    ) -> dict[str, list[InterfaceAddress]]:
+        """Addresses come from iproute2: sysfs does not carry IPv4 addresses."""
+        result = self._runner.run(["ip", "-j", "addr", "show"])
+        if not result.ok:
+            warnings.append(
+                "Interface addresses are unavailable: "
+                + (result.stderr.strip() or "ip returned an error")
+            )
+            return {}
+        try:
+            payload = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            warnings.append("The output of `ip -j addr show` could not be parsed.")
+            return {}
+
+        addresses: dict[str, list[InterfaceAddress]] = {}
+        for entry in payload:
+            name = entry.get("ifname")
+            if not name:
+                continue
+            addresses[name] = [
+                InterfaceAddress(
+                    address=info.get("local", ""),
+                    prefix_length=info.get("prefixlen"),
+                    family=info.get("family", ""),
+                )
+                for info in entry.get("addr_info", [])
+                if info.get("local")
+            ]
+        return addresses
+
+    def _default_route(self) -> tuple[str | None, str | None]:
+        raw = self._read_text("proc/net/route")
+        if not raw:
+            return None, None
+        for line in raw.splitlines()[1:]:
+            fields = line.split()
+            if len(fields) < 3 or fields[1] != "00000000":
+                continue
+            return fields[0], _hex_to_ipv4(fields[2])
+        return None, None
+
+    # Time
+
+    def time_sync(self) -> TimeReading:
+        warnings: list[str] = []
+        clocks = []
+        ptp_root = self._path("sys/class/ptp")
+        try:
+            for entry in sorted(ptp_root.iterdir()):
+                clocks.append(
+                    PtpClock(
+                        device=entry.name,
+                        clock_name=self._read_text(
+                            "sys/class/ptp", entry.name, "clock_name"
+                        ),
+                    )
+                )
+        except OSError:
+            warnings.append("No PTP clock is visible under /sys/class/ptp.")
+
+        source = None
+        units = self.services(
+            ["timemaster.service", "chronyd.service", "chrony.service"]
+        )
+        for unit in units.units:
+            if unit.active_state == "active":
+                source = "timemaster" if unit.unit.startswith("timemaster") else "ntp"
+                break
+
+        reading = TimeReading(
+            source=source,
+            ptp_clocks=clocks,
+            system_time=datetime.now(tz=UTC),
+            warnings=warnings,
+        )
+        self._fill_chrony_tracking(reading)
+        return reading
+
+    def _fill_chrony_tracking(self, reading: TimeReading) -> None:
+        """Offset and stratum, when chronyd answers.
+
+        `timemaster` supervises chronyd itself, and whether its command socket
+        is reachable from here depends on the generated configuration. An
+        unreachable daemon leaves the offset unknown, which is reported rather
+        than replaced by a zero an operator could mistake for "in sync".
+        """
+        result = self._runner.run(["chronyc", "-c", "tracking"])
+        if not result.ok:
+            reading.warnings.append(
+                "The time offset is unavailable: "
+                + (result.stderr.strip() or "chronyc could not reach the daemon")
+            )
+            return
+        fields = result.stdout.strip().split(",")
+        if len(fields) < 14:
+            reading.warnings.append(
+                "The output of `chronyc -c tracking` is unexpected."
+            )
+            return
+        reading.reference = fields[1] or None
+        try:
+            reading.stratum = int(fields[2])
+            reading.offset_seconds = float(fields[4])
+        except ValueError:
+            reading.warnings.append("The chrony tracking values could not be parsed.")
+        reading.synchronised = fields[13].strip().lower() == "normal"
+
+    # Services
+
+    def services(self, units: list[str]) -> ServicesReading:
+        warnings: list[str] = []
+        states: dict[str, ServiceUnit] = {}
+        if units:
+            result = self._runner.run(
+                [
+                    "systemctl",
+                    "list-units",
+                    "--all",
+                    "--output=json",
+                    "--no-pager",
+                    *units,
+                ]
+            )
+            if result.ok:
+                try:
+                    for entry in json.loads(result.stdout or "[]"):
+                        name = entry.get("unit")
+                        if not name:
+                            continue
+                        states[name] = ServiceUnit(
+                            unit=name,
+                            load_state=entry.get("load"),
+                            active_state=entry.get("active"),
+                            sub_state=entry.get("sub"),
+                            description=entry.get("description"),
+                        )
+                except json.JSONDecodeError:
+                    warnings.append(
+                        "The output of `systemctl list-units` is unexpected."
+                    )
+            else:
+                warnings.append(
+                    "Unit states are unavailable: "
+                    + (result.stderr.strip() or "systemctl returned an error")
+                )
+
+        # A unit systemd does not know about is reported as absent rather than
+        # omitted, because "corosync is not installed" is itself an answer.
+        return ServicesReading(
+            units=[
+                states.get(name, ServiceUnit(unit=name, load_state="not-found"))
+                for name in units
+            ],
+            warnings=warnings,
+        )
+
+    # Disks
+
+    def disks(self) -> DisksReading:
+        warnings = [
+            "Claim state is derived from partitions and holders. A whole disk "
+            "filesystem in use is not visible from /sys alone."
+        ]
+        by_path = self._by_path_index()
+        if not by_path:
+            warnings.append(
+                "Stable /dev/disk/by-path names are unavailable, and those are "
+                "the names ceph_osd_disks must use."
+            )
+
+        devices: list[BlockDevice] = []
+        block_root = self._path("sys/block")
+        try:
+            names = sorted(entry.name for entry in block_root.iterdir())
+        except OSError:
+            return DisksReading(warnings=["/sys/block is not readable."])
+
+        for name in names:
+            if name.startswith(_IGNORED_BLOCK_PREFIXES):
+                continue
+            device = block_root / name
+            partitions = sorted(
+                entry.name
+                for entry in _iterdir(device)
+                if (entry / "partition").exists()
+            )
+            holders = sorted(entry.name for entry in _iterdir(device / "holders"))
+            size_sectors = self._read_int("sys/block", name, "size")
+            claim_reason = None
+            if partitions:
+                claim_reason = "The device carries partitions."
+            elif holders:
+                claim_reason = f"The device is held by {', '.join(holders)}."
+            devices.append(
+                BlockDevice(
+                    name=name,
+                    path=f"/dev/{name}",
+                    by_path=by_path.get(name),
+                    size_bytes=size_sectors * _SECTOR_BYTES if size_sectors else None,
+                    model=self._read_text("sys/block", name, "device/model"),
+                    serial=self._read_text("sys/block", name, "device/serial"),
+                    rotational=_optional_bool(
+                        self._read_int("sys/block", name, "queue/rotational")
+                    ),
+                    removable=_optional_bool(
+                        self._read_int("sys/block", name, "removable")
+                    ),
+                    read_only=_optional_bool(self._read_int("sys/block", name, "ro")),
+                    partitions=partitions,
+                    holders=holders,
+                    claimed=bool(partitions or holders),
+                    claim_reason=claim_reason,
+                )
+            )
+        return DisksReading(devices=devices, warnings=warnings)
+
+    def _by_path_index(self) -> dict[str, str]:
+        """Map a kernel device name to its stable `by-path` name.
+
+        `ceph_osd_disks` is written in `by-path` form in the reference
+        inventory, and for good reason: `sda` is not stable across a reboot,
+        and an OSD created on the wrong disk destroys its contents.
+        """
+        index: dict[str, str] = {}
+        directory = self._path("dev/disk/by-path")
+        for entry in sorted(_iterdir(directory), key=lambda path: path.name):
+            try:
+                target = os.readlink(entry)
+            except OSError:
+                continue
+            # A partition link points at sda1 and never names a whole disk, so
+            # the first link found for a device name wins and later ones, which
+            # are aliases of the same disk, do not overwrite it.
+            index.setdefault(Path(target).name, f"/dev/disk/by-path/{entry.name}")
+        return index
+
+    # Logs
+
+    def logs(self, unit: str, lines: int) -> LogReading:
+        result = self._runner.run(
+            [
+                "journalctl",
+                "--unit",
+                unit,
+                "--lines",
+                str(lines),
+                "--no-pager",
+                "--output=json",
+            ],
+            timeout=15.0,
+        )
+        if not result.ok:
+            return LogReading(
+                unit=unit,
+                warnings=[
+                    "The journal is unavailable: "
+                    + (result.stderr.strip() or "journalctl returned an error")
+                ],
+            )
+
+        entries: list[LogLine] = []
+        for raw_line in result.stdout.splitlines():
+            if not raw_line.strip():
+                continue
+            try:
+                entry = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            entries.append(
+                LogLine(
+                    timestamp=_journal_timestamp(entry.get("__REALTIME_TIMESTAMP")),
+                    unit=entry.get("_SYSTEMD_UNIT"),
+                    priority=_optional_int(entry.get("PRIORITY")),
+                    message=_journal_message(entry.get("MESSAGE")),
+                )
+            )
+        return LogReading(unit=unit, lines=entries)
+
+
+# Parsing helpers, kept module level so the tests can hit them directly.
+
+
+def parse_cpu_list(raw: str | None) -> list[int]:
+    """Parse the kernel's `0-3,8` CPU list syntax."""
+    if not raw:
+        return []
+    cpus: list[int] = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        start, separator, end = chunk.partition("-")
+        try:
+            if separator:
+                cpus.extend(range(int(start), int(end) + 1))
+            else:
+                cpus.append(int(start))
+        except ValueError:
+            # `isolcpus=nohz,domain,4-7` carries flags before the list.
+            continue
+    return sorted(set(cpus))
+
+
+def _kernel_parameter(cmdline: str, name: str) -> str | None:
+    for token in cmdline.split():
+        key, separator, value = token.partition("=")
+        if separator and key == name:
+            return value
+    return None
+
+
+def _optional_bool(value: int | None) -> bool | None:
+    return None if value is None else bool(value)
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _symlink_name(path: Path) -> str | None:
+    try:
+        return Path(os.readlink(path)).name
+    except OSError:
+        return None
+
+
+def _iterdir(path: Path) -> list[Path]:
+    try:
+        return list(path.iterdir())
+    except OSError:
+        return []
+
+
+def _interface_kind(device: Path) -> str | None:
+    for marker, kind in (
+        ("bridge", "bridge"),
+        ("bonding", "bond"),
+        ("tun_flags", "tun"),
+    ):
+        if (device / marker).exists():
+            return kind
+    if (device / "device").exists():
+        return "physical"
+    if device.name == "lo":
+        return "loopback"
+    return "virtual"
+
+
+def _hex_to_ipv4(value: str) -> str | None:
+    """`/proc/net/route` stores addresses as little endian hexadecimal."""
+    try:
+        raw = int(value, 16)
+    except ValueError:
+        return None
+    return ".".join(str((raw >> shift) & 0xFF) for shift in (0, 8, 16, 24))
+
+
+def _journal_timestamp(value: object) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(str(value)) / 1_000_000, tz=UTC)
+    except (TypeError, ValueError):
+        return None
+
+
+def _journal_message(value: object) -> str:
+    # journalctl renders a non UTF-8 message as a list of byte values.
+    if isinstance(value, list):
+        return bytes(value).decode("utf-8", errors="replace")
+    return "" if value is None else str(value)

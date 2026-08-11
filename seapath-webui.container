@@ -1,0 +1,91 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Installed to /etc/containers/systemd/. Templated by the
+# deploy_seapath_webui role at M5, and shipped as is by the ISO before that.
+#
+# Note how small the host surface is. The configuration plane goes out over
+# SSH, even to the local node, so no host configuration is ever written from
+# here. Nothing below is writable except the service's own state and, from M1,
+# the .ssh directory of the `ansible` account, which is the trust material.
+# Every other mount is read only and serves an observation view.
+
+[Unit]
+Description=SEAPATH management web UI and API
+After=network-online.target libvirtd.service
+Wants=network-online.target
+
+[Container]
+Image=docker.io/insatomcat/seapath-webui:latest
+ContainerName=seapath-webui
+Network=host
+
+# Service state: PKI, session secret, and from M1 the SSH keys and the run
+# artefacts. The inventory repository is separate so it can be backed up,
+# cloned and exported on its own.
+Volume=/etc/seapath/webui:/etc/seapath/webui:rw
+Volume=/etc/seapath/inventory:/etc/seapath/inventory:rw
+Volume=/var/lib/seapath-webui:/var/lib/seapath-webui:rw
+
+# Trust material, from M1: where this node's own key and the peer keys are
+# installed for the `ansible` account. Templated by the role from the account's
+# real home, never hardcoded. The service appends single lines to
+# authorized_keys and never rewrites the file, because the ISO seeded it with
+# the site key that a conventional Ansible control machine uses.
+Volume=/home/ansible/.ssh:/home/ansible/.ssh:rw
+
+# Node identity. The container has its own UTS namespace, so without these the
+# view would show a container id instead of the machine's name.
+Volume=/etc/hostname:/etc/hostname:ro
+Volume=/etc/os-release:/etc/os-release:ro
+Volume=/etc/machine-id:/etc/machine-id:ro
+
+# Read only views.
+# /proc is deliberately not mounted: uptime, cpuinfo, cmdline, stat and, with
+# the host network namespace, net/route are not namespaced, so the container's
+# own /proc already reports the host's values.
+Volume=/sys:/sys:ro
+Volume=/run/systemd:/run/systemd:ro
+Volume=/var/log/journal:/var/log/journal:ro
+Volume=/run/log/journal:/run/log/journal:ro
+Volume=/etc/tuned:/etc/tuned:ro
+Volume=/run/tuned:/run/tuned:ro
+# The stable by-path names, which are what ceph_osd_disks holds. The whole
+# device tree is not needed, only the symlinks.
+Volume=/dev/disk:/dev/disk:ro
+# The directory, not corosync.conf itself: that file only appears once
+# cluster_setup_ha.yaml has run, and a bind mount of a source that does not
+# exist keeps the container from starting on a standalone node.
+Volume=/etc/corosync:/etc/corosync:ro
+Volume=/var/lib/pacemaker:/var/lib/pacemaker:ro
+
+# Runtime plane, from M2.
+Volume=/var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+Volume=/etc/ceph:/etc/ceph:ro
+
+# PAM authentication against the local accounts.
+Volume=/etc/shadow:/etc/shadow:ro
+Volume=/etc/passwd:/etc/passwd:ro
+Volume=/etc/group:/etc/group:ro
+
+Environment=PYTHONUNBUFFERED=1
+# Administration address, from ip_addr in the inventory. Substituted by the
+# role, and left unset here so a fresh ISO listens on every address.
+#Environment=SEAPATH_WEBUI_BIND_ADDRESS=192.168.200.121
+# Extra names in the self signed certificate, from ip_addr and, in a cluster,
+# cluster_ip_addr. Only affects how loudly the browser complains: what the
+# operator verifies is the fingerprint printed on the console.
+#Environment=SEAPATH_WEBUI_TLS_ADDITIONAL_SANS=192.168.200.121,192.168.55.1
+
+[Service]
+Restart=always
+RestartSec=5
+# Housekeeping CPUs only, substituted from the node's isolated set by the
+# Ansible role. Never a hardcoded value, and the exact opposite of the rtperfui
+# quadlet: this service must never compete with a real time guest.
+CPUAffinity=0-1
+CPUQuota=50%
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,55 @@
+// Copyright (C) 2026, RTE (http://www.rte-france.com)
+// SPDX-License-Identifier: Apache-2.0
+
+// The one place that talks to the API. Every call goes through here so the
+// CSRF token is echoed consistently and the error envelope is unwrapped once.
+
+const API = (function () {
+  function csrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)seapath_csrf=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  async function request(method, path, body) {
+    const headers = { Accept: "application/json" };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      headers["X-CSRF-Token"] = csrfToken();
+    }
+
+    const response = await fetch("/api/v1" + path, {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    if (response.status === 204) {
+      return null;
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const detail = (payload && payload.error) || {};
+      const failure = new Error(detail.message || response.statusText);
+      failure.code = detail.code || "error";
+      failure.status = response.status;
+      throw failure;
+    }
+    return payload;
+  }
+
+  return {
+    get: (path) => request("GET", path),
+    post: (path, body) => request("POST", path, body),
+    csrfToken,
+  };
+})();

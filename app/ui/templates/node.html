@@ -1,0 +1,90 @@
+{#
+Copyright (C) 2026, RTE (http://www.rte-france.com)
+SPDX-License-Identifier: Apache-2.0
+#}
+{% extends "base.html" %}
+{% block title %}Node - SEAPATH{% endblock %}
+
+{% block body %}
+<header class="topbar">
+  <div class="topbar-left">
+    <span class="brand">SEAPATH</span>
+    <span id="node-name" class="node-name">...</span>
+    <span id="node-mode" class="badge">...</span>
+  </div>
+  <div class="topbar-right">
+    <span id="identity"></span>
+    <button id="logout" type="button">Sign out</button>
+  </div>
+</header>
+
+<main class="page">
+  <p class="banner" id="banner" hidden></p>
+
+  <section class="card" id="card-summary">
+    <h2>Machine</h2>
+    <dl id="summary"></dl>
+  </section>
+
+  <section class="card" id="card-cpu">
+    <h2>CPU and isolation</h2>
+    <dl id="cpu-summary"></dl>
+    <div class="cpu-grid" id="cpu-grid"></div>
+    <p class="legend">
+      <span class="swatch isolated"></span> isolated
+      <span class="swatch housekeeping"></span> housekeeping
+    </p>
+  </section>
+
+  <section class="card" id="card-time">
+    <h2>Time synchronisation</h2>
+    <dl id="time-summary"></dl>
+  </section>
+
+  <section class="card" id="card-network">
+    <h2>Network</h2>
+    <table id="network-table">
+      <thead>
+        <tr>
+          <th>Interface</th><th>State</th><th>Addresses</th>
+          <th>Speed</th><th>Driver</th><th>MAC</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="card" id="card-services">
+    <h2>Services</h2>
+    <table id="services-table">
+      <thead>
+        <tr><th>Unit</th><th>State</th><th>Detail</th><th>Journal</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <pre class="journal" id="journal" hidden></pre>
+  </section>
+
+  <section class="card" id="card-disks">
+    <h2>Disks</h2>
+    <table id="disks-table">
+      <thead>
+        <tr>
+          <th>Device</th><th>Size</th><th>Model</th>
+          <th>Stable path</th><th>State</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="legend">
+      Ceph uses the stable <code>by-path</code> name, which is what
+      <code>ceph_osd_disks</code> holds in the inventory.
+    </p>
+  </section>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/api.js"></script>
+<script src="/static/node.js"></script>
+{% endblock %}

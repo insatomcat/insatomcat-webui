@@ -1,0 +1,333 @@
+/*
+ * Copyright (C) 2026, RTE (http://www.rte-france.com)
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root {
+  --bg: #10141a;
+  --panel: #171d26;
+  --line: #263140;
+  --text: #dfe6ee;
+  --muted: #8d9bad;
+  --accent: #4a9eff;
+  --ok: #46b16b;
+  --warn: #d9a441;
+  --bad: #d9534f;
+  --isolated: #7a5cd6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1, h2 {
+  font-weight: 600;
+}
+
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--accent);
+}
+
+/* Login */
+
+.login {
+  max-width: 26rem;
+  margin: 12vh auto;
+  padding: 2rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.login h1 {
+  margin: 0;
+  letter-spacing: 0.2em;
+}
+
+.subtitle {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+.login label {
+  display: block;
+  margin: 1rem 0 0.25rem;
+  color: var(--muted);
+}
+
+.login input {
+  width: 100%;
+  padding: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+button {
+  padding: 0.5rem 0.9rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: #07101c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.login button {
+  width: 100%;
+  margin-top: 1.5rem;
+  padding: 0.7rem;
+}
+
+.error {
+  margin-top: 1rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(217, 83, 79, 0.12);
+  border-left: 3px solid var(--bad);
+  color: #f4b9b7;
+}
+
+.hint {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Node view */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.topbar-left, .topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.brand {
+  letter-spacing: 0.2em;
+  font-weight: 700;
+}
+
+.node-name {
+  color: var(--muted);
+}
+
+.badge {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.badge-cluster {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.badge-unknown {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.page {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.banner {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  background: rgba(217, 164, 65, 0.1);
+  border-left: 3px solid var(--warn);
+  color: #eccd93;
+}
+
+.card {
+  padding: 1rem 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.card h2 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+dl {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) 1fr;
+  gap: 0.3rem 1rem;
+  margin: 0;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+}
+
+td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid rgba(38, 49, 64, 0.5);
+}
+
+td button {
+  padding: 0.15rem 0.5rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.tag {
+  padding: 0 0.35rem;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+
+.state-active, .state-free {
+  color: var(--ok);
+}
+
+.state-inactive, .state-claimed {
+  color: var(--muted);
+}
+
+.state-failed {
+  color: var(--bad);
+}
+
+.cpu-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 1rem;
+}
+
+.cpu {
+  position: relative;
+  width: 2.1rem;
+  height: 2.1rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  overflow: hidden;
+}
+
+/* The fill is the busy ratio between two polls, so an isolated CPU running a
+   real-time guest is visible at a glance. */
+.cpu::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: var(--busy, 0%);
+  background: currentColor;
+  opacity: 0.25;
+}
+
+.cpu.isolated {
+  color: var(--isolated);
+  border-color: var(--isolated);
+}
+
+.cpu.housekeeping {
+  color: var(--accent);
+}
+
+.legend {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.swatch {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin: 0 0.25rem 0 0.75rem;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+
+.swatch.isolated {
+  background: var(--isolated);
+}
+
+.swatch.housekeeping {
+  background: var(--accent);
+}
+
+.journal {
+  max-height: 20rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
+.footer {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.footer-note {
+  margin-left: auto;
+}

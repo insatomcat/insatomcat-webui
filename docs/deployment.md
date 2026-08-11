@@ -19,7 +19,18 @@ Contents:
   submodules, installed at build time by running the upstream `prepare.sh`;
 - an OpenSSH client;
 - `libvirt0` and the `vm_manager` package, for the runtime plane;
-- the `ceph` client libraries that `vm_manager` needs in cluster mode.
+- the `ceph` client libraries that `vm_manager` needs in cluster mode;
+- `iproute2`, `systemd` and the `chronyc` client, which is what the three
+  readings that are not in `/proc` or `/sys` need: interface addresses, unit
+  states and the journal, and the time offset. The image never runs a time
+  daemon: `timemaster` on the host owns that.
+
+Each layer arrives with the milestone that uses it, so that the image never
+carries the dependency tree, or the CVEs, of something no code calls yet. M0
+ships the service and the reading tools. The Ansible layer, meaning
+`ansible-core`, the collection and the OpenSSH client, arrives at M1 with the
+run adapter. The runtime layer, `libvirt0`, `vm_manager` and the Ceph client
+libraries, arrives at M2.
 
 The collection version is part of the image identity. It determines which
 playbooks exist and what they do, so it is recorded at build time, reported by
@@ -42,60 +53,44 @@ two host paths are mounted writable: the service's own state, and the
 `authorized_keys` of the `ansible` account, which is the trust material. Every
 other mount serves the runtime plane or a read only view.
 
-```ini
-[Unit]
-Description=SEAPATH management web UI and API
-After=network-online.target libvirtd.service
-Wants=network-online.target
-
-[Container]
-Image=docker.io/insatomcat/seapath-webui:latest
-ContainerName=seapath-webui
-Network=host
-
-# Service state: inventory repository, PKI, SSH keys, run artefacts
-Volume=/etc/seapath/webui:/etc/seapath/webui:rw
-Volume=/etc/seapath/inventory:/etc/seapath/inventory:rw
-Volume=/var/lib/seapath-webui:/var/lib/seapath-webui:rw
-
-# Trust material: where peer keys, and this node's own key, are installed for
-# the `ansible` account. Templated by the role from the account's real home,
-# never hardcoded.
-Volume=/home/ansible/.ssh:/home/ansible/.ssh:rw
-
-# Runtime plane
-Volume=/var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
-Volume=/etc/ceph:/etc/ceph:ro
-
-# Read only views
-Volume=/sys:/sys:ro
-Volume=/run/systemd:/run/systemd:ro
-Volume=/var/lib/pacemaker:/var/lib/pacemaker:ro
-Volume=/etc/corosync/corosync.conf:/etc/corosync/corosync.conf:ro
-
-# PAM authentication against local accounts
-Volume=/etc/shadow:/etc/shadow:ro
-Volume=/etc/passwd:/etc/passwd:ro
-Volume=/etc/group:/etc/group:ro
-
-Environment=PYTHONUNBUFFERED=1
-
-[Service]
-Restart=always
-RestartSec=5
-# Housekeeping CPUs only, substituted from the node's isolated set by the
-# Ansible role. Never a hardcoded value.
-CPUAffinity=0-1
-CPUQuota=50%
-Nice=5
-
-[Install]
-WantedBy=multi-user.target
-```
+The file itself is [`seapath-webui.container`](../seapath-webui.container) at the
+root of the repository, kept there rather than copied here so the two cannot
+drift apart.
 
 No `--privileged`, no host podman socket, no `--pid=host`. If an implementation
 finds itself needing one of those, that is the signal that it is about to
 configure the host directly, which is the one thing this design forbids.
+
+### What the node view actually needs, and what that changed
+
+Writing the read only adapter turned up four mounts the first draft of this
+document was missing, and one that would have stopped the container from
+starting.
+
+- **`/etc/corosync`, the directory, not `corosync.conf`.** That file only
+  appears once `cluster_setup_ha.yaml` has run. Bind mounting a source that
+  does not exist keeps the container from starting, so the original line would
+  have broken every standalone node, which is exactly the machine M1 targets.
+- **`/etc/hostname`, `/etc/os-release`, `/etc/machine-id`.** The container has
+  its own UTS namespace, so without the first the node view would show a
+  container id where the machine's name belongs. `machine-id` is how
+  `journalctl` finds the right journal directory.
+- **`/etc/tuned` and `/run/tuned`.** The active profile is an RT relevant fact
+  and it lives there.
+- **`/dev/disk`.** The stable `by-path` names are symlinks created by udev, and
+  `ceph_osd_disks` is written in that form. Only the symlink directory is
+  mounted, not the device tree.
+- **`/var/log/journal` and `/run/log/journal`,** for the journal tail.
+
+`/proc` is deliberately **not** mounted. `uptime`, `cpuinfo`, `cmdline` and
+`stat` are not namespaced, and with the host network namespace neither is
+`/proc/net`, so the container's own `/proc` already reports the host's values.
+
+Three mounts name paths that do not exist on a freshly installed machine:
+`/etc/ceph`, `/var/lib/pacemaker` and `/etc/corosync`. The role, and the ISO
+first boot unit before it, must create them empty. A missing source is a
+container that does not start, and a node that does not answer its browser is
+the one failure this whole project exists to prevent.
 
 ## 3. Surviving the runs it launches
 

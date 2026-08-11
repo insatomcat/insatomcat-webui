@@ -1,0 +1,95 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+"""Runtime settings, read from the environment.
+
+Every path is configurable because the test suite must run on a laptop with no
+SEAPATH machine anywhere: `host_root` in particular lets the read only adapter
+be pointed at a recorded `/proc` and `/sys` tree instead of the real one.
+"""
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="SEAPATH_WEBUI_",
+        env_file=None,
+        extra="ignore",
+    )
+
+    # Listen socket. The Ansible role binds this to the administration address.
+    bind_address: str = "0.0.0.0"
+    port: int = 8006
+
+    # Service state. This directory and the inventory repository are the only
+    # two places on the host the service ever writes, plus the `authorized_keys`
+    # of the `ansible` account from M1 on.
+    state_dir: Path = Path("/etc/seapath/webui")
+
+    # Root of the host filesystem as seen from this process. Always "/" in the
+    # container, a fixture tree in the tests.
+    host_root: Path = Path("/")
+
+    # Unix groups granting each role. An account in none of them, and not root,
+    # is authenticated but has no access at all.
+    admin_group: str = "seapath-admin"
+    operator_group: str = "seapath-operator"
+    viewer_group: str = "seapath-viewer"
+
+    # PAM service file shipped in the image, so the stack the service
+    # authenticates against does not depend on what the host happens to install.
+    pam_service: str = "seapath-webui"
+
+    # Extra subject alternative names for the self signed certificate, comma
+    # separated. The Ansible role fills this with `ip_addr` and, in a cluster,
+    # `cluster_ip_addr`, because the inventory is where those addresses live.
+    # It only affects how loudly the browser complains: what the operator
+    # verifies, and what the trust exchange pins, is the fingerprint.
+    tls_additional_sans: str = ""
+
+    # D6: the ISO must produce a machine reachable from a browser with no prior
+    # Ansible run, so root is accepted as an administrator. Sites that harden
+    # further can turn this off once another account exists.
+    allow_root_login: bool = True
+
+    session_ttl_seconds: int = 8 * 3600
+    session_cookie_name: str = "seapath_session"
+    csrf_cookie_name: str = "seapath_csrf"
+    csrf_header_name: str = "X-CSRF-Token"
+
+    log_level: str = "INFO"
+
+    # Baked into the image at build time by the Dockerfile. Which playbooks
+    # exist and what they do is a property of this version, so a run is only
+    # reproducible when it is recorded next to the inventory commit.
+    collection_version: str = "unknown"
+
+    # Development switch: serve the node view from the fake adapter so the UI
+    # can be worked on without a SEAPATH machine. Never set on a real node, and
+    # the service says so loudly at startup.
+    use_fakes: bool = False
+
+    @property
+    def pki_dir(self) -> Path:
+        return self.state_dir / "pki"
+
+    @property
+    def tls_cert_file(self) -> Path:
+        return self.pki_dir / "server.crt"
+
+    @property
+    def tls_key_file(self) -> Path:
+        return self.pki_dir / "server.key"
+
+    @property
+    def session_secret_file(self) -> Path:
+        return self.state_dir / "session.secret"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

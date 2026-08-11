@@ -52,24 +52,35 @@ No Node build step in production, same as `rtperfui` and `claudewebui`.
 
 ```
 app/
+  __main__.py        entry point: TLS material, console banner, then uvicorn
   main.py            app factory, router mounting, lifespan
-  core/              settings, logging, auth, sessions, locks
+  core/              settings, logging, errors, auth, sessions, security, tls
+  hosts/             the host adapters and their fakes
   inventory/         git repository, schema, validation, discovery, forms
   trust/             invitations, CSR signing, SSH key provisioning, revocation
   runs/              ansible-runner driver, event stream, artefacts
   services/          node.py, cluster.py, storage.py, vms.py
   api/v1/            routers, one module per resource
   ui/                Jinja templates and static assets
+packaging/           the PAM service file the image ships
 tests/               pytest, fakes, fixtures
 Dockerfile
 seapath-webui.container
 requirements.txt
 ```
 
-Host access is confined to two adapters: an SSH and `ansible-runner` adapter for
-everything that changes a machine, and a read only adapter for the observation
-views. Both have a fake implementation, and the whole test suite runs against
-the fakes, on a laptop, with no cluster and no libvirt.
+Host access is confined to two adapters, both under `app/hosts/`: an SSH and
+`ansible-runner` adapter for everything that changes a machine, and a read only
+adapter for the observation views. Both have a fake implementation, and the
+whole test suite runs against the fakes, on a laptop, with no cluster and no
+libvirt.
+
+Two rules keep that promise true rather than aspirational. The read only
+adapter takes its filesystem root as a parameter, so its parsers are exercised
+against a recorded `/proc` and `/sys` tree rather than the developer's machine.
+And it never shells out directly: commands go through an injected runner, which
+keeps the list of commands the service may run short and reviewable in one
+place, and lets a test replay recorded output.
 
 ## Style
 

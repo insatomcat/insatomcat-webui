@@ -1,0 +1,226 @@
+# Copyright (C) 2026, RTE (http://www.rte-france.com)
+# SPDX-License-Identifier: Apache-2.0
+
+"""A fake SEAPATH machine.
+
+This is what the whole test suite runs against, and what the `use_fakes`
+development switch serves, so the UI can be built on a laptop with no cluster,
+no libvirt and no container. The values describe a plausible freshly installed
+standalone hypervisor: converged enough to be interesting, not yet isolated,
+with one spare disk that could become an OSD.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+from app.hosts.models import (
+    BlockDevice,
+    CpuReading,
+    CpuTopologyEntry,
+    DisksReading,
+    InterfaceAddress,
+    LogLine,
+    LogReading,
+    NetworkInterface,
+    NetworkReading,
+    NodeIdentity,
+    NodeMode,
+    PtpClock,
+    ServicesReading,
+    ServiceUnit,
+    TimeReading,
+)
+
+_BOOT_TIME = datetime(2026, 8, 11, 6, 0, 0, tzinfo=UTC)
+_ISOLATED = [4, 5, 6, 7]
+
+
+class FakeHostReader:
+    """Deterministic readings. No randomness, so golden comparisons hold."""
+
+    def __init__(
+        self,
+        hostname: str = "seapath-machine",
+        mode: NodeMode = NodeMode.STANDALONE,
+        journal_available: bool = True,
+    ) -> None:
+        self.hostname = hostname
+        self.mode = mode
+        self.journal_available = journal_available
+
+    def node_identity(self) -> NodeIdentity:
+        return NodeIdentity(
+            hostname=self.hostname,
+            kernel_release="6.1.0-18-rt-amd64",
+            distribution="Debian GNU/Linux 12 (bookworm)",
+            distribution_id="debian",
+            distribution_version="12",
+            uptime_seconds=7200.0,
+            boot_time=_BOOT_TIME,
+            mode=self.mode,
+        )
+
+    def cpu(self) -> CpuReading:
+        topology = [
+            CpuTopologyEntry(
+                cpu=cpu,
+                socket=0,
+                core=cpu // 2,
+                online=True,
+                isolated=cpu in _ISOLATED,
+                busy_percent=float(cpu),
+            )
+            for cpu in range(8)
+        ]
+        return CpuReading(
+            model="Intel(R) Xeon(R) Silver 4310 CPU @ 2.10GHz",
+            present=8,
+            online=8,
+            isolated=list(_ISOLATED),
+            isolated_source="sysfs",
+            nohz_full=list(_ISOLATED),
+            housekeeping=[0, 1, 2, 3],
+            tuned_profile="realtime",
+            load_average=[0.15, 0.10, 0.05],
+            topology=topology,
+            kernel_cmdline=(
+                "BOOT_IMAGE=/vmlinuz root=/dev/mapper/main-root ro "
+                "isolcpus=4-7 nohz_full=4-7 rcu_nocbs=4-7"
+            ),
+        )
+
+    def network(self) -> NetworkReading:
+        return NetworkReading(
+            interfaces=[
+                NetworkInterface(
+                    name="eno1",
+                    kind="physical",
+                    mac="3c:ec:ef:00:11:22",
+                    operstate="up",
+                    carrier=True,
+                    mtu=1500,
+                    speed_mbps=1000,
+                    driver="igb",
+                    addresses=[
+                        InterfaceAddress(
+                            address="192.168.200.125", prefix_length=24, family="inet"
+                        )
+                    ],
+                ),
+                NetworkInterface(
+                    name="eno12419",
+                    kind="physical",
+                    mac="3c:ec:ef:00:11:33",
+                    operstate="up",
+                    carrier=True,
+                    mtu=1500,
+                    speed_mbps=10000,
+                    driver="ice",
+                ),
+                NetworkInterface(
+                    name="eno2",
+                    kind="physical",
+                    mac="3c:ec:ef:00:11:44",
+                    operstate="down",
+                    carrier=False,
+                    mtu=1500,
+                    driver="igb",
+                ),
+                NetworkInterface(
+                    name="lo",
+                    kind="loopback",
+                    operstate="unknown",
+                    mtu=65536,
+                    addresses=[
+                        InterfaceAddress(
+                            address="127.0.0.1", prefix_length=8, family="inet"
+                        )
+                    ],
+                ),
+            ],
+            default_route_interface="eno1",
+            default_gateway="192.168.200.1",
+        )
+
+    def time_sync(self) -> TimeReading:
+        return TimeReading(
+            synchronised=True,
+            source="timemaster",
+            reference="PTP",
+            stratum=1,
+            offset_seconds=0.000000132,
+            ptp_clocks=[PtpClock(device="ptp0", clock_name="ice-ptp")],
+            system_time=_BOOT_TIME,
+        )
+
+    def services(self, units: list[str]) -> ServicesReading:
+        active = {
+            "libvirtd.service",
+            "timemaster.service",
+            "ssh.service",
+            "openvswitch-switch.service",
+        }
+        return ServicesReading(
+            units=[
+                ServiceUnit(
+                    unit=unit,
+                    load_state="loaded" if unit in active else "not-found",
+                    active_state="active" if unit in active else "inactive",
+                    sub_state="running" if unit in active else "dead",
+                    description=unit,
+                )
+                for unit in units
+            ]
+        )
+
+    def disks(self) -> DisksReading:
+        return DisksReading(
+            devices=[
+                BlockDevice(
+                    name="sda",
+                    path="/dev/sda",
+                    by_path="/dev/disk/by-path/pci-0000:03:00.0-scsi-0:2:0:0",
+                    size_bytes=480_103_981_056,
+                    model="PERC H730P",
+                    rotational=False,
+                    removable=False,
+                    read_only=False,
+                    partitions=["sda1", "sda2"],
+                    holders=[],
+                    claimed=True,
+                    claim_reason="The device carries partitions.",
+                ),
+                BlockDevice(
+                    name="sdb",
+                    path="/dev/sdb",
+                    by_path="/dev/disk/by-path/pci-0000:03:00.0-scsi-0:2:1:0",
+                    size_bytes=1_920_383_410_176,
+                    model="PERC H730P",
+                    rotational=False,
+                    removable=False,
+                    read_only=False,
+                    partitions=[],
+                    holders=[],
+                    claimed=False,
+                ),
+            ]
+        )
+
+    def logs(self, unit: str, lines: int) -> LogReading:
+        if not self.journal_available:
+            return LogReading(
+                unit=unit,
+                warnings=["The journal is unavailable: journalctl: not found"],
+            )
+        return LogReading(
+            unit=unit,
+            lines=[
+                LogLine(
+                    timestamp=_BOOT_TIME,
+                    unit=unit,
+                    priority=6,
+                    message=f"{unit} started",
+                )
+            ][:lines],
+        )

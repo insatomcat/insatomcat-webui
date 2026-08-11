@@ -1,0 +1,300 @@
+// Copyright (C) 2026, RTE (http://www.rte-france.com)
+// SPDX-License-Identifier: Apache-2.0
+
+// The node view. It reads, it never writes: the only request that is not a GET
+// is signing out. Configuration arrives at M1, as inventory edits and runs.
+
+(function () {
+  const REFRESH_MS = 5000;
+  const warnings = new Set();
+
+  function text(value, fallback) {
+    if (value === null || value === undefined || value === "") {
+      return fallback || "unknown";
+    }
+    return String(value);
+  }
+
+  function duration(seconds) {
+    if (seconds === null || seconds === undefined) {
+      return "unknown";
+    }
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) {
+      return days + "d " + hours + "h " + minutes + "m";
+    }
+    return hours + "h " + minutes + "m";
+  }
+
+  function size(bytes) {
+    if (!bytes) {
+      return "unknown";
+    }
+    const units = ["B", "kB", "MB", "GB", "TB"];
+    let value = bytes;
+    let index = 0;
+    while (value >= 1000 && index < units.length - 1) {
+      value /= 1000;
+      index += 1;
+    }
+    return value.toFixed(index === 0 ? 0 : 1) + " " + units[index];
+  }
+
+  function fillList(element, pairs) {
+    element.replaceChildren();
+    pairs.forEach(([label, value]) => {
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const definition = document.createElement("dd");
+      definition.textContent = value;
+      element.append(term, definition);
+    });
+  }
+
+  function row(cells) {
+    const line = document.createElement("tr");
+    cells.forEach((cell) => {
+      const element = document.createElement("td");
+      if (cell instanceof Node) {
+        element.append(cell);
+      } else {
+        element.textContent = cell;
+      }
+      line.append(element);
+    });
+    return line;
+  }
+
+  // Readings say what they could not read. Hiding that would let "unknown"
+  // pass for "nothing wrong", which on a substation hypervisor is the wrong
+  // failure mode.
+  function collectWarnings(reading) {
+    (reading.warnings || []).forEach((warning) => warnings.add(warning));
+    const banner = document.getElementById("banner");
+    if (warnings.size === 0) {
+      banner.hidden = true;
+      return;
+    }
+    banner.replaceChildren();
+    warnings.forEach((warning) => {
+      const line = document.createElement("div");
+      line.textContent = warning;
+      banner.append(line);
+    });
+    banner.hidden = false;
+  }
+
+  async function loadSummary() {
+    const node = await API.get("/node");
+    collectWarnings(node);
+    document.getElementById("node-name").textContent = node.hostname;
+    const mode = document.getElementById("node-mode");
+    mode.textContent = node.mode;
+    mode.className = "badge badge-" + node.mode;
+
+    fillList(document.getElementById("summary"), [
+      ["Hostname", text(node.hostname)],
+      ["Mode", text(node.mode)],
+      ["Distribution", text(node.distribution)],
+      ["Kernel", text(node.kernel_release)],
+      ["Uptime", duration(node.uptime_seconds)],
+      ["SEAPATH collection", text(node.collection_version)],
+      ["Applied inventory commit", text(node.inventory_commit, "none yet")],
+    ]);
+  }
+
+  async function loadCpu() {
+    const cpu = await API.get("/node/cpu");
+    collectWarnings(cpu);
+    fillList(document.getElementById("cpu-summary"), [
+      ["Model", text(cpu.model)],
+      ["CPUs", text(cpu.online)],
+      [
+        "Isolated",
+        cpu.isolated.length
+          ? cpu.isolated.join(",") + " (" + text(cpu.isolated_source) + ")"
+          : "none",
+      ],
+      ["Housekeeping", cpu.housekeeping.join(",") || "unknown"],
+      ["tuned profile", text(cpu.tuned_profile)],
+      [
+        "Load average",
+        cpu.load_average ? cpu.load_average.join("  ") : "unknown",
+      ],
+    ]);
+
+    const grid = document.getElementById("cpu-grid");
+    grid.replaceChildren();
+    cpu.topology.forEach((entry) => {
+      const cell = document.createElement("div");
+      cell.className = "cpu " + (entry.isolated ? "isolated" : "housekeeping");
+      const busy = entry.busy_percent;
+      cell.title =
+        "CPU " +
+        entry.cpu +
+        (busy === null || busy === undefined ? "" : " - " + busy + "% busy");
+      cell.textContent = entry.cpu;
+      if (busy !== null && busy !== undefined) {
+        cell.style.setProperty("--busy", busy + "%");
+      }
+      grid.append(cell);
+    });
+  }
+
+  async function loadTime() {
+    const time = await API.get("/node/time");
+    collectWarnings(time);
+    fillList(document.getElementById("time-summary"), [
+      ["Source", text(time.source)],
+      ["Reference", text(time.reference)],
+      ["Stratum", text(time.stratum)],
+      [
+        "Offset",
+        time.offset_seconds === null || time.offset_seconds === undefined
+          ? "unknown"
+          : (time.offset_seconds * 1e6).toFixed(3) + " us",
+      ],
+      [
+        "Synchronised",
+        time.synchronised === null || time.synchronised === undefined
+          ? "unknown"
+          : String(time.synchronised),
+      ],
+      [
+        "PTP clocks",
+        time.ptp_clocks.map((clock) => clock.clock_name || clock.device).join(", ") ||
+          "none",
+      ],
+    ]);
+  }
+
+  async function loadNetwork() {
+    const network = await API.get("/node/network");
+    collectWarnings(network);
+    const body = document.querySelector("#network-table tbody");
+    body.replaceChildren();
+    network.interfaces.forEach((item) => {
+      const name = document.createElement("span");
+      name.textContent = item.name;
+      if (item.name === network.default_route_interface) {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = "default route";
+        name.append(" ", tag);
+      }
+      body.append(
+        row([
+          name,
+          text(item.operstate),
+          item.addresses
+            .map((address) => address.address + "/" + address.prefix_length)
+            .join(" ") || "-",
+          item.speed_mbps ? item.speed_mbps + " Mb/s" : "-",
+          text(item.driver, "-"),
+          text(item.mac, "-"),
+        ])
+      );
+    });
+  }
+
+  async function loadServices() {
+    const services = await API.get("/node/services");
+    collectWarnings(services);
+    const body = document.querySelector("#services-table tbody");
+    body.replaceChildren();
+    services.units.forEach((unit) => {
+      const state = document.createElement("span");
+      state.className = "state state-" + text(unit.active_state, "unknown");
+      state.textContent = text(unit.active_state, "unknown");
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "journal";
+      button.addEventListener("click", () => showJournal(unit.unit));
+
+      body.append(
+        row([unit.unit, state, text(unit.sub_state, "-"), button])
+      );
+    });
+  }
+
+  async function showJournal(unit) {
+    const journal = document.getElementById("journal");
+    journal.hidden = false;
+    journal.textContent = "Loading " + unit + " ...";
+    try {
+      const log = await API.get(
+        "/node/logs?unit=" + encodeURIComponent(unit) + "&lines=100"
+      );
+      if (log.warnings && log.warnings.length) {
+        journal.textContent = log.warnings.join("\n");
+        return;
+      }
+      journal.textContent =
+        log.lines
+          .map((line) => text(line.timestamp, "") + "  " + line.message)
+          .join("\n") || "The journal holds nothing for " + unit + ".";
+    } catch (failure) {
+      journal.textContent = failure.message;
+    }
+  }
+
+  async function loadDisks() {
+    const disks = await API.get("/node/disks");
+    collectWarnings(disks);
+    const body = document.querySelector("#disks-table tbody");
+    body.replaceChildren();
+    disks.devices.forEach((device) => {
+      const state = document.createElement("span");
+      state.className = device.claimed ? "state state-claimed" : "state state-free";
+      state.textContent = device.claimed ? "in use" : "available";
+      state.title = device.claim_reason || "";
+      body.append(
+        row([
+          device.path,
+          size(device.size_bytes),
+          text(device.model, "-"),
+          text(device.by_path, "unknown"),
+          state,
+        ])
+      );
+    });
+  }
+
+  async function loadIdentity() {
+    const me = await API.get("/auth/me");
+    document.getElementById("identity").textContent =
+      me.username + " (" + me.role + ")";
+  }
+
+  async function refresh() {
+    try {
+      await Promise.all([
+        loadIdentity(),
+        loadSummary(),
+        loadCpu(),
+        loadTime(),
+        loadNetwork(),
+        loadServices(),
+        loadDisks(),
+      ]);
+    } catch (failure) {
+      if (failure.status === 401) {
+        window.location.assign("/login");
+        return;
+      }
+      warnings.add(failure.message);
+      collectWarnings({});
+    }
+  }
+
+  document.getElementById("logout").addEventListener("click", async () => {
+    await API.post("/auth/logout");
+    window.location.assign("/login");
+  });
+
+  refresh();
+  window.setInterval(refresh, REFRESH_MS);
+})();

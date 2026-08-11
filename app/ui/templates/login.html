@@ -1,0 +1,38 @@
+{#
+Copyright (C) 2026, RTE (http://www.rte-france.com)
+SPDX-License-Identifier: Apache-2.0
+#}
+{% extends "base.html" %}
+{% block title %}Sign in - SEAPATH{% endblock %}
+
+{% block body %}
+<main class="login">
+  <h1>SEAPATH</h1>
+  <p class="subtitle">Node management</p>
+
+  <form id="login-form" autocomplete="on">
+    <label for="username">User name</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           required autofocus>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" required>
+
+    <button type="submit" id="submit">Sign in</button>
+  </form>
+
+  <p class="error" id="error" hidden></p>
+
+  <p class="hint">
+    Accounts are the machine's own Unix accounts. The role comes from
+    membership of <code>seapath-admin</code>, <code>seapath-operator</code> or
+    <code>seapath-viewer</code>.
+  </p>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/api.js"></script>
+<script src="/static/login.js"></script>
+{% endblock %}
