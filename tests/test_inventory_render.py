@@ -11,8 +11,10 @@ that claim from quietly becoming false.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -146,8 +148,18 @@ def test_a_broken_file_is_reported_rather_than_guessed_at() -> None:
         parse("all:\n  hosts:\n")
 
 
+# Where this interpreter's own ansible-core is, which is the one the
+# requirements pin, and which an unactivated virtualenv keeps off PATH.
+ANSIBLE_INVENTORY = shutil.which(
+    "ansible-inventory",
+    path=os.pathsep.join(
+        [str(Path(sys.executable).parent), os.environ.get("PATH", "")]
+    ),
+)
+
+
 @pytest.mark.skipif(
-    shutil.which("ansible-inventory") is None,
+    ANSIBLE_INVENTORY is None,
     reason="ansible-core is not installed in this environment",
 )
 def test_ansible_itself_parses_the_result(
@@ -158,7 +170,7 @@ def test_ansible_itself_parses_the_result(
     path.write_text(render(standalone))
 
     completed = subprocess.run(
-        ["ansible-inventory", "--list", "-i", str(path)],
+        [str(ANSIBLE_INVENTORY), "--list", "-i", str(path)],
         capture_output=True,
         text=True,
         check=False,

@@ -20,6 +20,8 @@ are left out, because `ansible-runner` owns stdout.
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -163,9 +165,26 @@ def prepare(request: RunRequest) -> Preparation:
             # on a conventional control machine that has its own key.
             "ANSIBLE_PRIVATE_KEY_FILE": str(request.private_key_file),
             "ANSIBLE_HOST_KEY_CHECKING": "True",
+            "PATH": _path_with_this_interpreter_first(),
         },
         command=command,
     )
+
+
+def _path_with_this_interpreter_first() -> str:
+    """PATH with the directory of the running interpreter in front.
+
+    `ansible-runner` spawns `ansible-playbook` as a child process and finds it
+    on PATH, and an inherited PATH is not something this service can vouch for.
+    Where the distribution ships its own Ansible, an inherited PATH runs that
+    one rather than the version `requirements.txt` pins. Where it ships none,
+    as on a plain Debian, there is nothing to run at all and every run ends in
+    rc 127. The interpreter executing this module is by construction the one
+    the pinned `ansible-core` was installed for, so its directory goes first.
+    """
+    directory = str(Path(sys.executable).parent)
+    inherited = os.environ.get("PATH", "")
+    return f"{directory}{os.pathsep}{inherited}" if inherited else directory
 
 
 def _as_ansible_literal(value: Any) -> str:

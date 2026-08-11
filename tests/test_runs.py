@@ -11,6 +11,8 @@ exceptional one.
 from __future__ import annotations
 
 import configparser
+import os
+import sys
 import time
 from pathlib import Path
 
@@ -205,6 +207,26 @@ def test_the_private_key_is_a_fact_about_the_control_machine(tmp_path: Path) -> 
     # Not in the inventory, which is why the exported inventory works unchanged
     # on a conventional control machine that has its own key.
     assert preparation.environment["ANSIBLE_PRIVATE_KEY_FILE"] == str(tmp_path / "key")
+
+
+def test_the_ansible_that_runs_is_the_one_this_image_pins(tmp_path: Path) -> None:
+    preparation = prepare(
+        RunRequest(
+            run_id="r1",
+            playbook="seapath.ansible.seapath_setup_main",
+            inventory_file=tmp_path / "inventory.yaml",
+            private_data_dir=tmp_path / "run",
+            collections_path=tmp_path / "collections",
+            private_key_file=tmp_path / "key",
+            known_hosts_file=tmp_path / "known_hosts",
+        )
+    )
+
+    # ansible-runner finds ansible-playbook on PATH. An inherited PATH would
+    # mean a distribution Ansible where there is one, and rc 127 where there is
+    # none, so the interpreter's own directory comes first.
+    interpreter_bin = str(Path(sys.executable).parent)
+    assert preparation.environment["PATH"].split(os.pathsep)[0] == interpreter_bin
 
 
 # The event mapping
