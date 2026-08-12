@@ -17,7 +17,7 @@ import pytest
 
 from app.hosts.local import LocalHostReader, parse_cpu_list, read_hostname
 from app.hosts.models import NodeMode
-from app.hosts.reader import CommandResult
+from app.hosts.reader import UNPRIVILEGED_UID, CommandResult
 from tests.fakes import FakeCommandRunner
 from tests.hostfixture import build_host_tree, write_proc_stat
 
@@ -318,3 +318,48 @@ def test_a_missing_journalctl_is_reported_rather_than_an_empty_log(
 
     assert log.lines == []
     assert any("journal is unavailable" in w for w in log.warnings)
+
+
+def test_a_systemctl_failure_names_the_half_of_the_route_that_is_missing(
+    host: Path, runner: FakeCommandRunner
+) -> None:
+    # Two deployments were spent on this, because relaying systemd's own words
+    # says which errno came back and never which mount is absent. The reading
+    # checks the route itself: /run/systemd/system, without which systemctl
+    # will not believe the machine runs systemd, then the bus socket.
+    runner.responses["systemctl list-units"] = CommandResult(
+        1, "", "Failed to connect to system scope bus via local transport: ..."
+    )
+    reader = LocalHostReader(root=host, runner=runner)
+
+    absent = reader.services(["libvirtd.service"]).warnings
+    assert any("/run/systemd/system" in warning for warning in absent)
+
+    (host / "run/systemd/system").mkdir(parents=True)
+    missing_bus = reader.services(["libvirtd.service"]).warnings
+    assert any("D-Bus system socket is not" in warning for warning in missing_bus)
+
+    (host / "run/dbus").mkdir(parents=True)
+    (host / "run/dbus/system_bus_socket").touch()
+    refused = reader.services(["libvirtd.service"]).warnings
+    # Everything is mounted and it still failed, which is a different problem
+    # and must not be reported as a missing mount.
+    assert any("systemd refusing rather than missing" in w for w in refused)
+
+
+def test_unit_states_are_never_asked_for_as_root(
+    reader: LocalHostReader, runner: FakeCommandRunner
+) -> None:
+    # The uid is not an incidental detail of this call, it is the call working
+    # at all. As root, `systemctl` insists on systemd's private socket and,
+    # since v257, does not fall back to the bus when it cannot use it, which in
+    # a container is always. As any other uid, the same binary uses the bus.
+    reader.services(["libvirtd.service"])
+
+    asked = [
+        user
+        for argv, user in zip(runner.calls, runner.users, strict=True)
+        if argv[0] == "systemctl"
+    ]
+    assert asked == [UNPRIVILEGED_UID]
+    assert UNPRIVILEGED_UID != 0

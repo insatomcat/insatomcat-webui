@@ -51,27 +51,27 @@ Volume=/etc/ssh:/etc/ssh:ro
 # the host network namespace, net/route are not namespaced, so the container's
 # own /proc already reports the host's values.
 Volume=/sys:/sys:ro
-# How `systemctl` reaches the host's systemd, and the two lines are one answer.
+# How `systemctl` reaches the host's systemd. These two mounts are necessary and
+# not sufficient: the third part of the answer is that the reading runs under an
+# unprivileged uid, in app/hosts/local.py, because as root systemctl uses
+# systemd's private socket and nothing else, and no container can use that one.
 #
-# /run/systemd/system, and deliberately not /run/systemd. `sd_booted()` tests
-# that the first exists, and without it systemctl refuses to do anything with
-# "System has not been booted with systemd as init system". But mounting the
-# parent brings /run/systemd/private with it, and systemctl running as root
-# tries that private socket before the bus: it connects, then reads the peer
-# credentials, and the kernel cannot translate the host's PID 1 into this
-# container's PID namespace, so it reports pid 0 and systemd rejects it with
-# ENODATA. That is the "No data available" a first deployment saw, and it is
-# not a fallback: the connection succeeded, so nothing tries the bus afterwards.
-# Hiding the private socket is what sends systemctl to the bus instead.
+# /run/systemd/system, and only that. It is what `sd_booted()` tests, and
+# without it systemctl refuses to do anything at all, saying the system was not
+# booted with systemd. Its parent is not mounted because it carries
+# /run/systemd/private, which is a trap: root systemctl connects to it, then
+# reads the peer credentials, and the kernel cannot express the host's PID 1 in
+# this container's PID namespace, so it reports pid 0 and systemd rejects it
+# with ENODATA. Since v257 there is no fallback to the bus from there either.
 #
 # The other answer would be --pid=host, which this design forbids, and rightly:
 # needing the host's PID namespace to read a unit state is out of proportion.
 Volume=/run/systemd/system:/run/systemd/system:ro
-# The D-Bus system socket, which is where the above lands. The directory and not
-# the socket, because dbus recreates the socket when it restarts and a bind
-# mount of the file would then point at an inode nothing listens on. Read only
-# is enough: connecting to a socket is not a write to the filesystem, and what a
-# client may ask the bus for is decided by the bus policy, not by the mount.
+# The bus itself, which is where an unprivileged systemctl goes. The directory
+# and not the socket, because dbus recreates the socket when it restarts and a
+# bind mount of the file would then point at an inode nothing listens on. Read
+# only is enough: connecting to a socket is not a write to the filesystem, and
+# what a client may ask the bus for is decided by the bus policy, not the mount.
 Volume=/run/dbus:/run/dbus:ro
 # The journal. The parent directories and not /var/log/journal itself: that
 # directory does not exist on a machine whose journal is volatile, a missing

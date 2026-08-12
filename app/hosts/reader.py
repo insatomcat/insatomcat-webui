@@ -31,6 +31,12 @@ class CommandResult:
         return self.returncode == 0
 
 
+# The uid a reading runs under when running as root would change its meaning.
+# `nobody` on every distribution this service targets, and passed as a number
+# so that resolving it is not one more thing that can fail.
+UNPRIVILEGED_UID = 65534
+
+
 class CommandRunner(Protocol):
     """Runs a read only command against the host.
 
@@ -39,11 +45,15 @@ class CommandRunner(Protocol):
     a short, reviewable list in one place.
     """
 
-    def run(self, argv: list[str], timeout: float = 5.0) -> CommandResult: ...
+    def run(
+        self, argv: list[str], timeout: float = 5.0, user: int | None = None
+    ) -> CommandResult: ...
 
 
 class SubprocessRunner:
-    def run(self, argv: list[str], timeout: float = 5.0) -> CommandResult:
+    def run(
+        self, argv: list[str], timeout: float = 5.0, user: int | None = None
+    ) -> CommandResult:
         try:
             completed = subprocess.run(  # noqa: S603 - fixed argv, never a shell
                 argv,
@@ -51,12 +61,17 @@ class SubprocessRunner:
                 text=True,
                 timeout=timeout,
                 check=False,
+                # None is subprocess's own default, meaning "stay as we are".
+                user=user,
             )
         except FileNotFoundError:
             return CommandResult(127, "", f"{argv[0]}: not found in this image")
         except subprocess.TimeoutExpired:
             return CommandResult(124, "", f"{argv[0]}: timed out after {timeout}s")
         except OSError as error:  # pragma: no cover - defensive
+            # Includes the case where this process is not root and therefore
+            # cannot drop to another uid, which is a developer running the
+            # service by hand rather than anything a node will do.
             return CommandResult(1, "", f"{argv[0]}: {error}")
         return CommandResult(completed.returncode, completed.stdout, completed.stderr)
 

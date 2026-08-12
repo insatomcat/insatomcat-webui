@@ -96,8 +96,8 @@ can pass while the product claim is false.
 ### First contact with real hardware
 
 The checklist above has not been filled in yet, because the first attempt to run
-it turned up six things that had to be fixed before the answers would mean
-anything. All six are packaging and interface faults rather than product ones,
+it turned up seven things that had to be fixed before the answers would mean
+anything. All seven are packaging and interface faults rather than product ones,
 and none of them is visible from a laptop, which is the point of this document.
 
 | Found | Cause | Fix |
@@ -105,7 +105,8 @@ and none of them is visible from a laptop, which is the point of this document.
 | The quadlet needed `/etc/seapath/webui`, `/etc/seapath/inventory` and `/var/lib/seapath-webui` created by hand | A missing bind mount source is a container that does not start, and the directories were left to a role that does not exist yet | The unit creates them in `ExecStartPre` |
 | Nothing said how to start from an inventory that already exists | Only the discovery path was documented | [inventory.md](inventory.md#adopting-an-inventory-that-already-exists) |
 | Adding an operator to a SEAPATH group needed the service restarted | `usermod` renames a new `/etc/group` over the old one, and the quadlet bind mounted the file, pinning the inode | The host's `/etc` is mounted read only at `/run/host/etc` and the image symlinks the three account files into it |
-| Every unit read "unknown", with `Failed to connect to system scope bus ... No data available` on screen at every sign in | `systemctl` as root uses `/run/systemd/private`, which the container had, and then fails the `SO_PEERCRED` check because the host's PID 1 has no number in the container's PID namespace | `/run/systemd/system` is mounted instead of its parent, so systemctl falls through to `/run/dbus`, where only the uid matters. This is check 10, which was the one expected to need a quadlet adjustment, and it needed two |
+| Every unit read "unknown", with `Failed to connect to system scope bus` on screen at every sign in | `systemctl` as root uses `/run/systemd/private` and nothing else, and no container can use that socket: its peer is PID 1, whose credentials do not survive a PID namespace. Since v257 it does not fall back to the bus either | The reading runs under an unprivileged uid, which is the branch that uses the bus, plus `/run/dbus` and `/run/systemd/system` mounted. This was check 10, expected to need a quadlet adjustment, and it turned out not to be a mount problem at all |
+| The banner went on naming faults that had been fixed, across service restarts | The node view accumulated warnings in a set that lived as long as the page, and the page refreshes itself without ever reloading | Rebuilt every poll, so a repaired condition disappears on its own |
 | A permanent caveat about how disk claim state is derived sat in the warning banner | It was a warning on every reading, whether or not anything went wrong | Moved into the disks card, next to the table it qualifies |
 | Tables spilled out of their cards, and clicking Configuration or Runs opened a confirmation dialog that could not be dismissed | The cards sit in flexible grid tracks, so nothing widens one to fit a `by-path` name; and the modal is `display: grid`, which beats the `hidden` attribute | The tables of machine values take the whole page width, scroll inside their own card when that is still not enough, and `[hidden]` is enforced |
 

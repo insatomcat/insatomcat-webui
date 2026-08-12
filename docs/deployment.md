@@ -120,26 +120,35 @@ starting.
   worth writing down in full.
 
   `systemctl` running as **root** does not go to the bus. It connects to
-  `/run/systemd/private` first, deliberately, so that it still works during
-  early boot before dbus exists. That socket comes with `/run/systemd`, so the
-  container had it, and the connection succeeded. What failed is the check
-  immediately after: systemd reads the peer credentials with `SO_PEERCRED`, and
-  the kernel cannot express the host's PID 1 in a container that has its own PID
-  namespace, so it reports `pid 0`. systemd rejects that as unusable and returns
-  `ENODATA`, which surfaces as `Failed to connect to system scope bus via local
-  transport: No data available`. The connection had already succeeded, so
-  nothing fell back to the bus, and adding `/run/dbus` alone changed nothing.
+  `/run/systemd/private`, deliberately, so that it still works during early boot
+  before dbus exists. That socket comes with `/run/systemd`, so the container
+  had it and the connection succeeded. What failed is the check immediately
+  after: systemd reads the peer credentials with `SO_PEERCRED`, the kernel
+  cannot express the host's PID 1 in a container that has its own PID namespace,
+  so it reports `pid 0`, and systemd rejects that as unusable with `ENODATA`.
+  On screen: `Failed to connect to system scope bus via local transport: No data
+  available`.
 
-  So the container is given `/run/systemd/system`, which is the only thing
-  `sd_booted()` looks at and without which systemctl refuses to run at all, and
-  **not** its parent. With no private socket in sight, systemctl falls through
-  to `/run/dbus/system_bus_socket`, where the peer is dbus rather than PID 1 and
-  the EXTERNAL authentication only cares about the uid, which containers do
-  express. The directory rather than the socket, because dbus recreates the
-  socket when it restarts, and a bind mount of the file would then point at an
-  inode nothing listens on.
+  Hiding the private socket only changed the errno to `ENOENT`, because
+  `bus_connect_system_systemd()` lost its fallback to the bus in systemd v257,
+  which is what the image ships. Read as root, that route has no working end.
 
-  The alternative was `--pid=host`, and it is the reason this design says no to
+  What actually fixes it is in `app/hosts/local.py`: **the reading runs under an
+  unprivileged uid.** `bus_connect_transport_systemd()` branches on `geteuid()`,
+  and any uid other than 0 goes straight to `/run/dbus/system_bus_socket`, where
+  the peer is dbus rather than PID 1, the EXTERNAL authentication only weighs
+  the uid, which containers do express, and listing unit states needs no
+  privilege under the default policy. It is also the honest arrangement: a
+  reading that changes nothing has no business being root.
+
+  The two mounts are still both required, and neither is sufficient.
+  `/run/systemd/system` is what `sd_booted()` tests, before the uid branch, and
+  without it systemctl refuses to run at all. `/run/dbus` is where the
+  unprivileged path lands, and it is mounted as a directory rather than a socket
+  because dbus recreates the socket when it restarts, which would leave a bind
+  mount of the file pointing at an inode nothing listens on.
+
+  The alternative was `--pid=host`, and this is the reason the design says no to
   it: needing the host's PID namespace to read a unit state is out of all
   proportion to reading a unit state.
 

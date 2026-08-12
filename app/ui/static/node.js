@@ -6,7 +6,12 @@
 
 (function () {
   const REFRESH_MS = 5000;
-  const warnings = new Set();
+  // The warnings of the poll in progress, and only of that one. This used to
+  // be a set that lived as long as the page, so a mount that was repaired an
+  // hour and three service restarts ago went on being reported until somebody
+  // reloaded the page by hand. A banner that cannot go back down is a banner
+  // an operator learns to stop reading.
+  let warnings = new Set();
 
   function text(value, fallback) {
     if (value === null || value === undefined || value === "") {
@@ -261,6 +266,10 @@
   }
 
   async function refresh() {
+    // Before the requests, not after: the readings come back one by one and
+    // each renders the banner as it lands, so the cycle they belong to has to
+    // be open when the first one arrives.
+    warnings = new Set();
     try {
       await Promise.all([
         Chrome.load(),

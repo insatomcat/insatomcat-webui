@@ -39,7 +39,12 @@ from app.hosts.models import (
     ServiceUnit,
     TimeReading,
 )
-from app.hosts.reader import CommandRunner, SubprocessRunner
+from app.hosts.reader import (
+    UNPRIVILEGED_UID,
+    CommandResult,
+    CommandRunner,
+    SubprocessRunner,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -421,6 +426,19 @@ class LocalHostReader:
         warnings: list[str] = []
         states: dict[str, ServiceUnit] = {}
         if units:
+            # Deliberately not as root, and this is the whole trick. Asked as
+            # root, `systemctl` talks to systemd's private socket at
+            # /run/systemd/private and, since v257, does not fall back to the
+            # bus when that fails. Neither outcome is reachable from a
+            # container: hiding the socket gives ENOENT, mounting it gives
+            # ENODATA, because the peer credentials of the host's PID 1 cannot
+            # be expressed in another PID namespace. Asked as any other uid,
+            # the same binary connects to /run/dbus/system_bus_socket, where
+            # the peer is dbus, the authentication only weighs the uid, and
+            # reading unit states needs no privilege in the default policy.
+            #
+            # Which is the honest arrangement anyway: this reading changes
+            # nothing and has no business being root.
             result = self._runner.run(
                 [
                     "systemctl",
@@ -429,7 +447,8 @@ class LocalHostReader:
                     "--output=json",
                     "--no-pager",
                     *units,
-                ]
+                ],
+                user=UNPRIVILEGED_UID,
             )
             if result.ok:
                 try:
@@ -449,15 +468,7 @@ class LocalHostReader:
                         "The output of `systemctl list-units` is unexpected."
                     )
             else:
-                # Naming D-Bus is not a detail. The only way this fails on a
-                # running machine is a container that cannot reach the host's
-                # bus, so the message has to point at the mount rather than at
-                # the machine, which is fine.
-                warnings.append(
-                    "Unit states are unavailable, because `systemctl` could not "
-                    "reach the host's systemd over D-Bus: "
-                    + (result.stderr.strip() or "systemctl returned an error")
-                )
+                warnings.append(self._systemctl_failure(result))
 
         # A unit systemd does not know about is reported as absent rather than
         # omitted, because "corosync is not installed" is itself an answer.
@@ -467,6 +478,34 @@ class LocalHostReader:
                 for name in units
             ],
             warnings=warnings,
+        )
+
+    def _systemctl_failure(self, result: CommandResult) -> str:
+        """Why `systemctl` could not answer, in terms of what to go and fix.
+
+        Relaying systemd's own words alone cost two deployments: on a machine
+        that is plainly running, every one of them means the container was not
+        given a way to reach the host's systemd, and the operator cannot tell
+        which way from the errno. So the two halves of that route are checked
+        here, and named.
+        """
+        said = result.stderr.strip() or "systemctl returned an error"
+        if not self._path("run/systemd/system").is_dir():
+            return (
+                "Unit states are unavailable: this container cannot see "
+                "/run/systemd/system, so systemctl will not believe the machine "
+                f"is running systemd at all. The quadlet mounts it. {said}"
+            )
+        if not self._path("run/dbus/system_bus_socket").exists():
+            return (
+                "Unit states are unavailable: the D-Bus system socket is not "
+                "there. Either the quadlet does not mount /run/dbus, or the "
+                "machine is not running a D-Bus daemon, and `ls -l /run/dbus` on "
+                f"the machine says which. {said}"
+            )
+        return (
+            "Unit states are unavailable, although the D-Bus system socket is "
+            f"there, so this is systemd refusing rather than missing: {said}"
         )
 
     # Disks
