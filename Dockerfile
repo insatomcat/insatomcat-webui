@@ -71,8 +71,14 @@ FROM python:3.11-slim
 #   git                     the inventory repository, which is the audit trail
 #   openssh-client          the configuration plane, which reaches every node
 #                           over SSH including the local one
-#   iproute2, systemd       the two observation readings that are not in /proc
-#                           or /sys
+#   iproute2                the one hardware reading that is not a file under
+#                           /proc or /sys: sysfs carries no IPv4 address
+#
+# No `systemd` and no `chrony`. This image held both so it could ask the host
+# for unit states, the journal and the clock offset, which is live state that
+# prometheus-node-exporter already publishes on every node. Reading it here
+# needed a route from the container to the host's systemd, and that route is
+# what the quadlet paid for. See docs/deployment.md.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -81,7 +87,6 @@ RUN apt-get update && \
         libpam-modules \
         libpam0g \
         openssh-client \
-        systemd \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv

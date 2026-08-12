@@ -57,16 +57,10 @@ class FakeCommandRunner:
     def __init__(self, responses: dict[str, CommandResult] | None = None) -> None:
         self.responses = responses or {}
         self.calls: list[list[str]] = []
-        # The uid each command was asked for, so a test can assert that a
-        # reading which must not run as root did not.
-        self.users: list[int | None] = []
 
-    def run(
-        self, argv: list[str], timeout: float = 5.0, user: int | None = None
-    ) -> CommandResult:
+    def run(self, argv: list[str], timeout: float = 5.0) -> CommandResult:
         del timeout
         self.calls.append(list(argv))
-        self.users.append(user)
         for key, result in self.responses.items():
             if " ".join(argv).startswith(key):
                 return result

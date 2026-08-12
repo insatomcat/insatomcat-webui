@@ -268,11 +268,11 @@ td button {
   font-size: 0.7rem;
 }
 
-.state-active, .state-free {
+.state-free {
   color: var(--ok);
 }
 
-.state-inactive, .state-claimed {
+.state-claimed {
   color: var(--muted);
 }
 
@@ -340,19 +340,6 @@ td button {
 
 .swatch.housekeeping {
   background: var(--accent);
-}
-
-.journal {
-  max-height: 20rem;
-  margin-top: 0.75rem;
-  padding: 0.6rem;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  font-size: 0.75rem;
-  white-space: pre-wrap;
 }
 
 .footer {

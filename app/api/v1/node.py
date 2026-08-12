@@ -6,21 +6,18 @@
 Every endpoint is open to the viewer role, which is the whole point of having
 one. Configuration lives elsewhere, and from M1 it is reached by editing the
 inventory and running a playbook.
+
+What is here is what this machine *is*, which is what the inventory form needs.
+What it is *doing* comes from prometheus-node-exporter, which every node runs.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.core.auth import Role
 from app.core.security import require_role
-from app.hosts.models import (
-    CpuReading,
-    DisksReading,
-    LogReading,
-    NetworkReading,
-    ServicesReading,
-)
+from app.hosts.models import CpuReading, DisksReading, NetworkReading
 from app.services.node import NodeService, NodeSummary
 
 router = APIRouter(
@@ -49,20 +46,6 @@ def network(request: Request) -> NetworkReading:
     return _service(request).network()
 
 
-@router.get("/services", response_model=ServicesReading)
-def services(request: Request) -> ServicesReading:
-    return _service(request).services()
-
-
 @router.get("/disks", response_model=DisksReading)
 def disks(request: Request) -> DisksReading:
     return _service(request).disks()
-
-
-@router.get("/logs", response_model=LogReading)
-def logs(
-    request: Request,
-    unit: str = Query(description="One of the units listed by GET /node/services"),
-    lines: int = Query(default=100, ge=1, le=1000),
-) -> LogReading:
-    return _service(request).logs(unit, lines)

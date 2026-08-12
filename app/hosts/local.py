@@ -3,14 +3,22 @@
 
 """The read only adapter as implemented against a real SEAPATH machine.
 
-Everything comes from `/proc`, `/sys` and a short list of read only commands.
-The filesystem root is a parameter so the parsers can be exercised against a
-recorded tree, which is what lets the test suite run on a laptop.
+Everything comes from `/proc`, `/sys` and one read only command, `ip -j addr
+show`, because sysfs does not carry IPv4 addresses. The filesystem root is a
+parameter so the parsers can be exercised against a recorded tree, which is
+what lets the test suite run on a laptop.
 
 Two facts about the container shape this file. The quadlet is unprivileged and
 bind mounts the host `/sys` read only, and it uses the host network namespace,
 so `/proc/net` and `/sys/class/net` describe the host. What is not visible from
 there is reported as unavailable with the reason, never guessed.
+
+What this reading is *for* is the boundary worth holding. It answers the
+questions the inventory form asks about hardware: which NICs, which disks by
+their stable name, how many CPUs, is there a PTP clock. Live state, meaning
+unit states, the journal and the clock offset, is not read here at all: every
+node runs prometheus-node-exporter, and a second source of truth for it was
+worth neither the mounts nor the code. See docs/deployment.md.
 """
 
 from __future__ import annotations
@@ -28,22 +36,13 @@ from app.hosts.models import (
     CpuTopologyEntry,
     DisksReading,
     InterfaceAddress,
-    LogLine,
-    LogReading,
     NetworkInterface,
     NetworkReading,
     NodeIdentity,
     NodeMode,
     PtpClock,
-    ServicesReading,
-    ServiceUnit,
 )
-from app.hosts.reader import (
-    UNPRIVILEGED_UID,
-    CommandResult,
-    CommandRunner,
-    SubprocessRunner,
-)
+from app.hosts.reader import CommandRunner, SubprocessRunner
 
 logger = logging.getLogger(__name__)
 
@@ -377,94 +376,6 @@ class LocalHostReader:
             for entry in entries
         ]
 
-    # Services
-
-    def services(self, units: list[str]) -> ServicesReading:
-        warnings: list[str] = []
-        states: dict[str, ServiceUnit] = {}
-        if units:
-            # Deliberately not as root, and this is the whole trick. Asked as
-            # root, `systemctl` talks to systemd's private socket at
-            # /run/systemd/private and, since v257, does not fall back to the
-            # bus when that fails. Neither outcome is reachable from a
-            # container: hiding the socket gives ENOENT, mounting it gives
-            # ENODATA, because the peer credentials of the host's PID 1 cannot
-            # be expressed in another PID namespace. Asked as any other uid,
-            # the same binary connects to /run/dbus/system_bus_socket, where
-            # the peer is dbus, the authentication only weighs the uid, and
-            # reading unit states needs no privilege in the default policy.
-            #
-            # Which is the honest arrangement anyway: this reading changes
-            # nothing and has no business being root.
-            result = self._runner.run(
-                [
-                    "systemctl",
-                    "list-units",
-                    "--all",
-                    "--output=json",
-                    "--no-pager",
-                    *units,
-                ],
-                user=UNPRIVILEGED_UID,
-            )
-            if result.ok:
-                try:
-                    for entry in json.loads(result.stdout or "[]"):
-                        name = entry.get("unit")
-                        if not name:
-                            continue
-                        states[name] = ServiceUnit(
-                            unit=name,
-                            load_state=entry.get("load"),
-                            active_state=entry.get("active"),
-                            sub_state=entry.get("sub"),
-                            description=entry.get("description"),
-                        )
-                except json.JSONDecodeError:
-                    warnings.append(
-                        "The output of `systemctl list-units` is unexpected."
-                    )
-            else:
-                warnings.append(self._systemctl_failure(result))
-
-        # A unit systemd does not know about is reported as absent rather than
-        # omitted, because "corosync is not installed" is itself an answer.
-        return ServicesReading(
-            units=[
-                states.get(name, ServiceUnit(unit=name, load_state="not-found"))
-                for name in units
-            ],
-            warnings=warnings,
-        )
-
-    def _systemctl_failure(self, result: CommandResult) -> str:
-        """Why `systemctl` could not answer, in terms of what to go and fix.
-
-        Relaying systemd's own words alone cost two deployments: on a machine
-        that is plainly running, every one of them means the container was not
-        given a way to reach the host's systemd, and the operator cannot tell
-        which way from the errno. So the two halves of that route are checked
-        here, and named.
-        """
-        said = result.stderr.strip() or "systemctl returned an error"
-        if not self._path("run/systemd/system").is_dir():
-            return (
-                "Unit states are unavailable: this container cannot see "
-                "/run/systemd/system, so systemctl will not believe the machine "
-                f"is running systemd at all. The quadlet mounts it. {said}"
-            )
-        if not self._path("run/dbus/system_bus_socket").exists():
-            return (
-                "Unit states are unavailable: the D-Bus system socket is not "
-                "there. Either the quadlet does not mount /run/dbus, or the "
-                "machine is not running a D-Bus daemon, and `ls -l /run/dbus` on "
-                f"the machine says which. {said}"
-            )
-        return (
-            "Unit states are unavailable, although the D-Bus system socket is "
-            f"there, so this is systemd refusing rather than missing: {said}"
-        )
-
     # Disks
 
     def disks(self) -> DisksReading:
@@ -547,48 +458,6 @@ class LocalHostReader:
             index.setdefault(Path(target).name, f"/dev/disk/by-path/{entry.name}")
         return index
 
-    # Logs
-
-    def logs(self, unit: str, lines: int) -> LogReading:
-        result = self._runner.run(
-            [
-                "journalctl",
-                "--unit",
-                unit,
-                "--lines",
-                str(lines),
-                "--no-pager",
-                "--output=json",
-            ],
-            timeout=15.0,
-        )
-        if not result.ok:
-            return LogReading(
-                unit=unit,
-                warnings=[
-                    "The journal is unavailable: "
-                    + (result.stderr.strip() or "journalctl returned an error")
-                ],
-            )
-
-        entries: list[LogLine] = []
-        for raw_line in result.stdout.splitlines():
-            if not raw_line.strip():
-                continue
-            try:
-                entry = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
-            entries.append(
-                LogLine(
-                    timestamp=_journal_timestamp(entry.get("__REALTIME_TIMESTAMP")),
-                    unit=entry.get("_SYSTEMD_UNIT"),
-                    priority=_optional_int(entry.get("PRIORITY")),
-                    message=_journal_message(entry.get("MESSAGE")),
-                )
-            )
-        return LogReading(unit=unit, lines=entries)
-
 
 # Parsing helpers, kept module level so the tests can hit them directly.
 
@@ -642,13 +511,6 @@ def _optional_bool(value: int | None) -> bool | None:
     return None if value is None else bool(value)
 
 
-def _optional_int(value: object) -> int | None:
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
 def _symlink_name(path: Path) -> str | None:
     try:
         return Path(os.readlink(path)).name
@@ -685,17 +547,3 @@ def _hex_to_ipv4(value: str) -> str | None:
     except ValueError:
         return None
     return ".".join(str((raw >> shift) & 0xFF) for shift in (0, 8, 16, 24))
-
-
-def _journal_timestamp(value: object) -> datetime | None:
-    try:
-        return datetime.fromtimestamp(int(str(value)) / 1_000_000, tz=UTC)
-    except (TypeError, ValueError):
-        return None
-
-
-def _journal_message(value: object) -> str:
-    # journalctl renders a non UTF-8 message as a list of byte values.
-    if isinstance(value, list):
-        return bytes(value).decode("utf-8", errors="replace")
-    return "" if value is None else str(value)

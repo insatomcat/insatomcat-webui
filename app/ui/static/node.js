@@ -3,6 +3,9 @@
 
 // The node view. It reads, it never writes: the only request that is not a GET
 // is signing out. Configuration arrives at M1, as inventory edits and runs.
+//
+// What the machine *is*, which is what the inventory form is filled from. What
+// it is *doing* is in Grafana, off the node exporter every node runs.
 
 (function () {
   const REFRESH_MS = 5000;
@@ -174,48 +177,6 @@
     });
   }
 
-  async function loadServices() {
-    const services = await API.get("/node/services");
-    collectWarnings(services);
-    const body = document.querySelector("#services-table tbody");
-    body.replaceChildren();
-    services.units.forEach((unit) => {
-      const state = document.createElement("span");
-      state.className = "state state-" + text(unit.active_state, "unknown");
-      state.textContent = text(unit.active_state, "unknown");
-
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = "journal";
-      button.addEventListener("click", () => showJournal(unit.unit));
-
-      body.append(
-        row([unit.unit, state, text(unit.sub_state, "-"), button])
-      );
-    });
-  }
-
-  async function showJournal(unit) {
-    const journal = document.getElementById("journal");
-    journal.hidden = false;
-    journal.textContent = "Loading " + unit + " ...";
-    try {
-      const log = await API.get(
-        "/node/logs?unit=" + encodeURIComponent(unit) + "&lines=100"
-      );
-      if (log.warnings && log.warnings.length) {
-        journal.textContent = log.warnings.join("\n");
-        return;
-      }
-      journal.textContent =
-        log.lines
-          .map((line) => text(line.timestamp, "") + "  " + line.message)
-          .join("\n") || "The journal holds nothing for " + unit + ".";
-    } catch (failure) {
-      journal.textContent = failure.message;
-    }
-  }
-
   async function loadDisks() {
     const disks = await API.get("/node/disks");
     collectWarnings(disks);
@@ -249,7 +210,6 @@
         loadSummary(),
         loadCpu(),
         loadNetwork(),
-        loadServices(),
         loadDisks(),
       ]);
     } catch (failure) {

@@ -5,48 +5,25 @@
 
 The service layer decides what is worth showing and what a reading means for
 an operator. The adapter only decides how to read it.
+
+Unit states, the journal and the clock offset used to be here. They are live
+state, every node runs prometheus-node-exporter, and duplicating it cost this
+container a route to the host's systemd. See docs/deployment.md.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import Field
-
 from app import __version__
-from app.core.errors import ApiError
 from app.hosts.models import (
     CpuReading,
     DisksReading,
-    LogReading,
     NetworkReading,
     NodeMode,
     Reading,
-    ServicesReading,
-    ServiceUnit,
 )
 from app.hosts.reader import HostReader
-
-# The units an operator looks at on a SEAPATH machine, in the order they are
-# worth reading. The list is an allowlist for the journal endpoint too: an
-# arbitrary unit name from a browser would be a way to read anything the
-# journal holds, which is more than the viewer role should see.
-UNITS_OF_INTEREST = (
-    "seapath-webui.service",
-    "libvirtd.service",
-    "openvswitch-switch.service",
-    "timemaster.service",
-    "corosync.service",
-    "pacemaker.service",
-    "ceph.target",
-    "ssh.service",
-    "snmpd.service",
-    "prometheus-node-exporter.service",
-    "cockpit.socket",
-    "tuned.service",
-)
-
-_MAX_LOG_LINES = 1000
 
 
 class NodeSummary(Reading):
@@ -72,8 +49,6 @@ class NodeSummary(Reading):
     inventory_commit: str | None = None
     role: str | None = None
 
-    units: list[ServiceUnit] = Field(default_factory=list)
-
 
 class NodeService:
     def __init__(self, reader: HostReader, collection_version: str) -> None:
@@ -82,7 +57,6 @@ class NodeService:
 
     def summary(self) -> NodeSummary:
         identity = self._reader.node_identity()
-        services = self._reader.services(list(UNITS_OF_INTEREST))
         return NodeSummary(
             hostname=identity.hostname,
             mode=identity.mode,
@@ -91,8 +65,7 @@ class NodeService:
             uptime_seconds=identity.uptime_seconds,
             boot_time=identity.boot_time,
             collection_version=self._collection_version,
-            units=services.units,
-            warnings=[*identity.warnings, *services.warnings],
+            warnings=identity.warnings,
         )
 
     def cpu(self) -> CpuReading:
@@ -101,18 +74,5 @@ class NodeService:
     def network(self) -> NetworkReading:
         return self._reader.network()
 
-    def services(self) -> ServicesReading:
-        return self._reader.services(list(UNITS_OF_INTEREST))
-
     def disks(self) -> DisksReading:
         return self._reader.disks()
-
-    def logs(self, unit: str, lines: int) -> LogReading:
-        if unit not in UNITS_OF_INTEREST:
-            raise ApiError(
-                "unit_not_allowed",
-                f"{unit} is not one of the units this view exposes.",
-                404,
-                {"allowed": list(UNITS_OF_INTEREST)},
-            )
-        return self._reader.logs(unit, max(1, min(lines, _MAX_LOG_LINES)))

@@ -91,8 +91,8 @@ def test_a_table_scrolls_inside_its_card_rather_than_over_the_next_one(
     # flexible grid tracks, so nothing widens a card to fit its content. The
     # tables of machine values take the whole width, and scroll inside their
     # card when even that is not enough.
-    assert body.count('class="card wide"') == 3
-    assert body.count('<div class="table-scroll">') == 3
+    assert body.count('class="card wide"') == 2
+    assert body.count('<div class="table-scroll">') == 2
     assert ".card.wide" in css
     assert "overflow-x: auto" in css
 

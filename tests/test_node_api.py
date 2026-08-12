@@ -8,13 +8,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.services.node import UNITS_OF_INTEREST
-
 _ENDPOINTS = [
     "/api/v1/node",
     "/api/v1/node/cpu",
     "/api/v1/node/network",
-    "/api/v1/node/services",
     "/api/v1/node/disks",
 ]
 
@@ -35,7 +32,6 @@ def test_the_summary_reports_the_machine_and_the_collection(
     assert body["collection_version"] == "test"
     # No inventory before M1, and the field says so rather than disappearing.
     assert body["inventory_commit"] is None
-    assert [unit["unit"] for unit in body["units"]] == list(UNITS_OF_INTEREST)
 
 
 def test_the_cpu_view_separates_isolated_from_housekeeping(
@@ -59,27 +55,12 @@ def test_the_disk_view_carries_the_stable_path_ceph_needs(
     assert free[0]["by_path"].startswith("/dev/disk/by-path/")
 
 
-def test_the_journal_is_limited_to_the_units_the_view_exposes(
-    signed_in: TestClient,
-) -> None:
-    allowed = signed_in.get("/api/v1/node/logs?unit=libvirtd.service")
-    refused = signed_in.get("/api/v1/node/logs?unit=sshd@1234.service")
-
-    assert allowed.status_code == 200
-    assert refused.status_code == 404
-    assert refused.json()["error"]["code"] == "unit_not_allowed"
-
-
-def test_an_unavailable_journal_is_reported_rather_than_faked(
-    client: TestClient, reader
-) -> None:
-    reader.journal_available = False
-    client.post("/api/v1/auth/login", json={"username": "admin", "password": "secret"})
-
-    body = client.get("/api/v1/node/logs?unit=libvirtd.service").json()
-
-    assert body["lines"] == []
-    assert body["warnings"]
+def test_live_state_is_not_served_from_here(signed_in: TestClient) -> None:
+    # Unit states, the journal and the clock offset were read from this
+    # container once, and the mounts that took are the reason this test exists:
+    # bringing any of them back is a design decision, not a convenience.
+    for path in ("/api/v1/node/services", "/api/v1/node/logs", "/api/v1/node/time"):
+        assert signed_in.get(path).status_code == 404
 
 
 def test_the_openapi_schema_is_where_the_api_document_says(

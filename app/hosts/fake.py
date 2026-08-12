@@ -20,15 +20,11 @@ from app.hosts.models import (
     CpuTopologyEntry,
     DisksReading,
     InterfaceAddress,
-    LogLine,
-    LogReading,
     NetworkInterface,
     NetworkReading,
     NodeIdentity,
     NodeMode,
     PtpClock,
-    ServicesReading,
-    ServiceUnit,
 )
 
 _BOOT_TIME = datetime(2026, 8, 11, 6, 0, 0, tzinfo=UTC)
@@ -42,11 +38,9 @@ class FakeHostReader:
         self,
         hostname: str = "seapath-machine",
         mode: NodeMode = NodeMode.STANDALONE,
-        journal_available: bool = True,
     ) -> None:
         self.hostname = hostname
         self.mode = mode
-        self.journal_available = journal_available
 
     def node_identity(self) -> NodeIdentity:
         return NodeIdentity(
@@ -145,26 +139,6 @@ class FakeHostReader:
     def ptp_clocks(self) -> list[PtpClock]:
         return [PtpClock(device="ptp0", clock_name="ice-ptp")]
 
-    def services(self, units: list[str]) -> ServicesReading:
-        active = {
-            "libvirtd.service",
-            "timemaster.service",
-            "ssh.service",
-            "openvswitch-switch.service",
-        }
-        return ServicesReading(
-            units=[
-                ServiceUnit(
-                    unit=unit,
-                    load_state="loaded" if unit in active else "not-found",
-                    active_state="active" if unit in active else "inactive",
-                    sub_state="running" if unit in active else "dead",
-                    description=unit,
-                )
-                for unit in units
-            ]
-        )
-
     def disks(self) -> DisksReading:
         return DisksReading(
             devices=[
@@ -196,22 +170,4 @@ class FakeHostReader:
                     claimed=False,
                 ),
             ]
-        )
-
-    def logs(self, unit: str, lines: int) -> LogReading:
-        if not self.journal_available:
-            return LogReading(
-                unit=unit,
-                warnings=["The journal is unavailable: journalctl: not found"],
-            )
-        return LogReading(
-            unit=unit,
-            lines=[
-                LogLine(
-                    timestamp=_BOOT_TIME,
-                    unit=unit,
-                    priority=6,
-                    message=f"{unit} started",
-                )
-            ][:lines],
         )

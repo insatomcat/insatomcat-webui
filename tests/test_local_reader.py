@@ -17,7 +17,7 @@ import pytest
 
 from app.hosts.local import LocalHostReader, parse_cpu_list, read_hostname
 from app.hosts.models import NodeMode
-from app.hosts.reader import UNPRIVILEGED_UID, CommandResult
+from app.hosts.reader import CommandResult
 from tests.fakes import FakeCommandRunner
 from tests.hostfixture import build_host_tree, write_proc_stat
 
@@ -46,47 +46,6 @@ def runner() -> FakeCommandRunner:
                             ],
                         },
                         {"ifname": "lo", "addr_info": []},
-                    ]
-                ),
-                "",
-            ),
-            "systemctl list-units": CommandResult(
-                0,
-                json.dumps(
-                    [
-                        {
-                            "unit": "libvirtd.service",
-                            "load": "loaded",
-                            "active": "active",
-                            "sub": "running",
-                            "description": "Virtualization daemon",
-                        }
-                    ]
-                ),
-                "",
-            ),
-            "journalctl": CommandResult(
-                0,
-                "\n".join(
-                    [
-                        json.dumps(
-                            {
-                                "__REALTIME_TIMESTAMP": "1754899200000000",
-                                "_SYSTEMD_UNIT": "libvirtd.service",
-                                "PRIORITY": "6",
-                                "MESSAGE": "libvirtd started",
-                            }
-                        ),
-                        json.dumps(
-                            {
-                                "__REALTIME_TIMESTAMP": "1754899201000000",
-                                "_SYSTEMD_UNIT": "libvirtd.service",
-                                "PRIORITY": "6",
-                                # journalctl renders a non UTF-8 message as
-                                # a list of byte values.
-                                "MESSAGE": [104, 105],
-                            }
-                        ),
                     ]
                 ),
                 "",
@@ -243,17 +202,6 @@ def test_a_machine_with_no_ptp_hardware_reads_as_empty(tmp_path: Path) -> None:
     assert LocalHostReader(root=tmp_path / "empty").ptp_clocks() == []
 
 
-def test_a_unit_systemd_does_not_know_is_reported_as_absent(
-    reader: LocalHostReader,
-) -> None:
-    services = reader.services(["libvirtd.service", "corosync.service"])
-    states = {unit.unit: unit for unit in services.units}
-
-    assert states["libvirtd.service"].active_state == "active"
-    # "corosync is not installed" is itself an answer worth showing.
-    assert states["corosync.service"].load_state == "not-found"
-
-
 def test_disks_carry_the_by_path_name_and_their_claim_state(
     reader: LocalHostReader,
 ) -> None:
@@ -288,64 +236,16 @@ def test_the_by_path_name_of_a_disk_is_never_a_partition_link(
     assert devices["sda"].by_path == ("/dev/disk/by-path/pci-0000:03:00.0-scsi-0:2:0:0")
 
 
-def test_the_journal_is_parsed_including_a_non_utf8_message(
-    reader: LocalHostReader,
-) -> None:
-    log = reader.logs("libvirtd.service", 100)
-
-    assert [line.message for line in log.lines] == ["libvirtd started", "hi"]
-    assert log.lines[0].priority == 6
-
-
-def test_a_missing_journalctl_is_reported_rather_than_an_empty_log(
-    host: Path,
-) -> None:
-    log = LocalHostReader(root=host, runner=FakeCommandRunner()).logs("ssh.service", 10)
-
-    assert log.lines == []
-    assert any("journal is unavailable" in w for w in log.warnings)
-
-
-def test_a_systemctl_failure_names_the_half_of_the_route_that_is_missing(
-    host: Path, runner: FakeCommandRunner
-) -> None:
-    # Two deployments were spent on this, because relaying systemd's own words
-    # says which errno came back and never which mount is absent. The reading
-    # checks the route itself: /run/systemd/system, without which systemctl
-    # will not believe the machine runs systemd, then the bus socket.
-    runner.responses["systemctl list-units"] = CommandResult(
-        1, "", "Failed to connect to system scope bus via local transport: ..."
-    )
-    reader = LocalHostReader(root=host, runner=runner)
-
-    absent = reader.services(["libvirtd.service"]).warnings
-    assert any("/run/systemd/system" in warning for warning in absent)
-
-    (host / "run/systemd/system").mkdir(parents=True)
-    missing_bus = reader.services(["libvirtd.service"]).warnings
-    assert any("D-Bus system socket is not" in warning for warning in missing_bus)
-
-    (host / "run/dbus").mkdir(parents=True)
-    (host / "run/dbus/system_bus_socket").touch()
-    refused = reader.services(["libvirtd.service"]).warnings
-    # Everything is mounted and it still failed, which is a different problem
-    # and must not be reported as a missing mount.
-    assert any("systemd refusing rather than missing" in w for w in refused)
-
-
-def test_unit_states_are_never_asked_for_as_root(
+def test_the_reading_shells_out_only_for_the_addresses(
     reader: LocalHostReader, runner: FakeCommandRunner
 ) -> None:
-    # The uid is not an incidental detail of this call, it is the call working
-    # at all. As root, `systemctl` insists on systemd's private socket and,
-    # since v257, does not fall back to the bus when it cannot use it, which in
-    # a container is always. As any other uid, the same binary uses the bus.
-    reader.services(["libvirtd.service"])
+    # Everything else is a file under /proc, /sys or /etc. This is the property
+    # that keeps the container out of the host's systemd, its bus and its
+    # journal, so it is asserted rather than left to the reviewer's memory.
+    reader.node_identity()
+    reader.cpu()
+    reader.network()
+    reader.ptp_clocks()
+    reader.disks()
 
-    asked = [
-        user
-        for argv, user in zip(runner.calls, runner.users, strict=True)
-        if argv[0] == "systemctl"
-    ]
-    assert asked == [UNPRIVILEGED_UID]
-    assert UNPRIVILEGED_UID != 0
+    assert [argv[0] for argv in runner.calls] == ["ip"]

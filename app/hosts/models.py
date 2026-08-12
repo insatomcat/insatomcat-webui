@@ -90,18 +90,6 @@ class PtpClock(BaseModel):
     clock_name: str | None = None
 
 
-class ServiceUnit(BaseModel):
-    unit: str
-    load_state: str | None = None
-    active_state: str | None = None
-    sub_state: str | None = None
-    description: str | None = None
-
-
-class ServicesReading(Reading):
-    units: list[ServiceUnit] = Field(default_factory=list)
-
-
 class BlockDevice(BaseModel):
     name: str
     path: str
@@ -120,15 +108,3 @@ class BlockDevice(BaseModel):
 
 class DisksReading(Reading):
     devices: list[BlockDevice] = Field(default_factory=list)
-
-
-class LogLine(BaseModel):
-    timestamp: datetime | None = None
-    unit: str | None = None
-    priority: int | None = None
-    message: str
-
-
-class LogReading(Reading):
-    unit: str
-    lines: list[LogLine] = Field(default_factory=list)
