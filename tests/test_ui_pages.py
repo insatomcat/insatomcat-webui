@@ -65,6 +65,38 @@ def test_the_apply_confirmation_makes_the_machine_be_typed_out(
     assert "to confirm" in body
 
 
+def test_a_hidden_element_is_hidden_whatever_its_display_rule(
+    signed_in: TestClient,
+) -> None:
+    body = signed_in.get("/setup").text
+    css = signed_in.get("/static/style.css").text
+
+    # Everything in this UI is shown and dismissed with the `hidden` attribute,
+    # and a `display` rule in the stylesheet beats the attribute. The
+    # confirmation modal is `display: grid`, so without this rule it is on
+    # screen from the moment the page loads, over a page nobody asked to leave,
+    # and Cancel does not dismiss it.
+    assert '<div class="modal" id="confirm" hidden>' in body
+    assert "[hidden]" in css
+    assert "display: none !important" in css
+
+
+def test_a_table_scrolls_inside_its_card_rather_than_over_the_next_one(
+    signed_in: TestClient,
+) -> None:
+    body = signed_in.get("/").text
+    css = signed_in.get("/static/style.css").text
+
+    # A `by-path` name is longer than half a page, and the cards sit in
+    # flexible grid tracks, so nothing widens a card to fit its content. The
+    # tables of machine values take the whole width, and scroll inside their
+    # card when even that is not enough.
+    assert body.count('class="card wide"') == 3
+    assert body.count('<div class="table-scroll">') == 3
+    assert ".card.wide" in css
+    assert "overflow-x: auto" in css
+
+
 def test_the_login_page_carries_no_navigation(client: TestClient) -> None:
     body = client.get("/login").text
 

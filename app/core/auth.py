@@ -59,9 +59,11 @@ class PamAuthenticator:
     """PAM against the service file shipped in the image.
 
     The image carries its own `/etc/pam.d/seapath-webui` so the stack does not
-    depend on what the host happens to have installed, and the quadlet mounts
-    `/etc/shadow`, `/etc/passwd` and `/etc/group` read only so `pam_unix` can
-    do its job.
+    depend on what the host happens to have installed, and `/etc/shadow`,
+    `/etc/passwd` and `/etc/group` are symlinks into the host's `/etc`, which
+    the quadlet mounts read only, so `pam_unix` can do its job against the
+    machine's real accounts as they are now rather than as they were when this
+    container started.
     """
 
     def __init__(self, service: str) -> None:

@@ -25,6 +25,52 @@ inventory and nothing else.
 - The repository is exportable and clonable as is. A site that wants a real
   Ansible control machine clones it and loses nothing.
 
+### Adopting an inventory that already exists
+
+The service initialises the repository at first start and commits a seed
+inventory describing this machine, from discovery. It only does that when the
+repository holds no inventory, which is what makes the other direction possible:
+a site that already keeps its SEAPATH inventory in git puts it in place first,
+and the service adopts it, history included.
+
+```bash
+# Before the first start. The directory is created by the unit, and git clone
+# wants it empty or absent.
+git clone https://git.example/seapath-inventory /etc/seapath/inventory
+systemctl start seapath-webui
+```
+
+If the service has already started once, the repository holds a seed commit
+describing this machine and nothing else. Removing the directory and cloning
+over it loses nothing that was not derived from the machine itself.
+
+Four things have to be true of what lands there:
+
+- **One file, `inventory.yaml`, at the root.** That is the only file read and
+  the only file written. An inventory kept as `seapath-cluster.yaml` is renamed
+  with `git mv` and committed.
+- **This machine appears under `all.hosts`, keyed by its own hostname.** The
+  host key is what `inventory_hostname` resolves to, and `hostname` renames the
+  machine, so a key that does not match is not a naming detail.
+- **Groups carry the meaning they carry upstream.** `cluster_machines` present
+  means cluster mode, membership of `observers` rather than `hypervisors` is the
+  role. That is how the reference inventories express it and how the playbooks
+  read it.
+- **Variables this service does not model survive.** They are parsed into
+  `extra` and written back unchanged, so a hand maintained inventory does not
+  come back from the first form save with half of itself missing.
+
+Two limits of M1 are worth knowing before adopting a cluster inventory. The
+configuration form edits the first host under `all.hosts`, because M1 configures
+one machine. And a run plays every host the inventory declares, since the
+adapter passes no `--limit`, while M1 only provisions the trust between this
+node and itself: applying against hosts this node has no trust with fails on
+them, as unreachable.
+
+The repository is an ordinary git repository, so a remote survives the clone.
+Nothing pushes or pulls it by itself: replication between nodes arrives with the
+cluster, at M3.
+
 ## 2. Who may write
 
 Single writer, under quorum.

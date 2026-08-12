@@ -17,6 +17,7 @@ is to look at the UI and find out why.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from app.hosts.reader import HostReader
 from app.inventory.service import InventoryService
@@ -45,6 +46,38 @@ def node_addresses(reader: HostReader) -> list[str]:
     ]
 
 
+# The image symlinks these into /run/host/etc, which the quadlet mounts from the
+# host. They are what PAM authenticates against and what the role of an account
+# is read from.
+_ACCOUNT_FILES = ("/etc/passwd", "/etc/group", "/etc/shadow")
+
+
+def check_account_files() -> list[str]:
+    """Report the account files that cannot be read, and say so loudly.
+
+    A symlink that leads nowhere means the host's `/etc` was not mounted. The
+    only other symptom is every password being refused, which looks exactly
+    like a machine whose operators have all forgotten theirs, so it is worth a
+    line in the journal naming the cause.
+
+    A file that is not a symlink at all is a real one, which is the shape these
+    paths have outside the image, and there is nothing to complain about.
+    """
+    missing = [
+        path
+        for path in _ACCOUNT_FILES
+        if Path(path).is_symlink() and not Path(path).exists()
+    ]
+    if missing:
+        logger.error(
+            "%s cannot be read, so no account can be authenticated. The host's "
+            "/etc must be mounted read only at /run/host/etc, which the quadlet "
+            "does.",
+            ", ".join(missing),
+        )
+    return missing
+
+
 def run_startup_tasks(
     hostname: str,
     reader: HostReader,
@@ -53,6 +86,8 @@ def run_startup_tasks(
     runs: RunService,
     settings,
 ) -> None:
+    check_account_files()
+
     addresses = node_addresses(reader)
 
     try:

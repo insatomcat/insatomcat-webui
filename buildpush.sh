@@ -23,10 +23,15 @@ podman build \
 podman tag "${IMAGE}:${VERSION}" "${IMAGE}:latest"
 
 echo "Smoke testing the image"
-# No host mounts and no TLS material: this only proves the process starts and
+# One host mount and no TLS material: this only proves the process starts and
 # answers. Anything about a real machine is validated on one, and written up in
 # docs/validation.md.
+#
+# The mount is the read only /etc the quadlet also gives the container. The
+# image symlinks /etc/passwd, /etc/group and /etc/shadow into it, so without it
+# the image would be smoke tested in a state no deployment ever has.
 container=$(podman run -d --rm -p 18006:8006 \
+    -v /etc:/run/host/etc:ro \
     -e SEAPATH_WEBUI_STATE_DIR=/tmp/state \
     -e SEAPATH_WEBUI_PORT=8006 \
     "${IMAGE}:${VERSION}")

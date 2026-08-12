@@ -115,16 +115,101 @@ starting.
   or `StrictHostKeyChecking=no`, which is a real man in the middle window on
   the administration network. No network is involved, so there is nothing to
   intercept. See [cluster-join.md](cluster-join.md).
+- **`/run/dbus`, read only.** `systemctl` asks the host's systemd for unit
+  states over the D-Bus system socket, and `/run/systemd` alone does not carry
+  it. Without this mount every unit reads "unknown" and the node view shows
+  `Failed to connect to system scope bus`, which is true and useless. The
+  directory rather than the socket: dbus recreates the socket when it restarts,
+  and a bind mount of the file would then point at an inode nothing listens on.
+
+Two mounts changed shape once the service met a real machine, and both times
+because a bind mount pins an inode:
+
+- **`/etc`, read only, at `/run/host/etc`,** instead of a bind mount of
+  `/etc/passwd`, `/etc/group` and `/etc/shadow`. `usermod` and `passwd` write a
+  new file and rename it over the old one, so the container went on reading the
+  files as they were when it started: adding an operator to `seapath-admin` did
+  nothing until the service was restarted, and so did changing a password. The
+  image symlinks the three files into that mount, and a symlink is resolved at
+  every open. If the mount is missing the symlinks dangle, and the service says
+  so in the journal at startup rather than silently refusing every password.
+- **`/var/log` and `/run/log`,** the parents, instead of the two journal
+  directories. `/var/log/journal` does not exist on a machine whose journal is
+  volatile, a missing bind mount source is a container that does not start, and
+  creating it is precisely what makes journald persistent. Changing how the
+  machine logs is not a side effect this service may have.
 
 `/proc` is deliberately **not** mounted. `uptime`, `cpuinfo`, `cmdline` and
 `stat` are not namespaced, and with the host network namespace neither is
 `/proc/net`, so the container's own `/proc` already reports the host's values.
 
-Three mounts name paths that do not exist on a freshly installed machine:
-`/etc/ceph`, `/var/lib/pacemaker` and `/etc/corosync`. The role, and the ISO
-first boot unit before it, must create them empty. A missing source is a
-container that does not start, and a node that does not answer its browser is
-the one failure this whole project exists to prevent.
+Several mounts name paths that do not exist on a freshly installed machine:
+`/etc/seapath/webui`, `/etc/seapath/inventory`, `/var/lib/seapath-webui`,
+`/etc/ceph`, `/var/lib/pacemaker`, `/etc/corosync`, `/etc/tuned` and
+`/run/tuned`. A missing source is a container that does not start, and a node
+that does not answer its browser is the one failure this whole project exists to
+prevent. So the quadlet creates them itself, in `ExecStartPre`, rather than
+leaving them to the Ansible role or to the ISO. Dropping the file on a machine
+and starting the unit is meant to be enough, and it was not: the first
+deployment on real hardware needed three directories created by hand before the
+container would start.
+
+Each of those paths is inert when empty, which is what makes creating them
+harmless. That is a real constraint and not a formality: `/var/log/journal` is
+deliberately not in the list, because creating that one is how journald switches
+to a persistent journal.
+
+`/home/ansible/.ssh` is not created either, and that is deliberate too. The
+account comes from the ISO, and a service that invents a home directory for a
+user nobody created has invented a second problem. If that mount is missing, the
+machine was not installed from the SEAPATH ISO.
+
+### Bringing a machine up by hand
+
+The ISO does this at first boot, and the role at section 4 does it on a machine
+that is already running. Both come later than the first real deployments, so
+here is the same thing by hand, and it is short on purpose:
+
+```bash
+podman pull docker.io/insatomcat/seapath-webui:latest
+install -m 0644 seapath-webui.container /etc/containers/systemd/
+systemctl daemon-reload
+systemctl start seapath-webui
+
+# The URL and the certificate fingerprint, printed once at startup. The
+# fingerprint is what an operator verifies in the browser, and what the trust
+# exchange between nodes pins.
+journalctl --unit seapath-webui --boot
+```
+
+The state directories are created by the unit itself, so nothing has to exist
+beforehand.
+
+Then the accounts. Authentication is PAM against the machine's own accounts, and
+the role comes from Unix group membership, so an operator needs an account on
+the machine and a place in one of three groups:
+
+```bash
+groupadd --force seapath-admin
+groupadd --force seapath-operator
+groupadd --force seapath-viewer
+usermod --append --groups seapath-admin alice
+```
+
+`root` is an administrator without any of this, which is what makes a freshly
+installed machine usable before a single playbook has run. An account that
+authenticates but is in none of the groups is refused, and told which groups
+exist: that is the intended answer, not a failure.
+
+The group takes effect at the next login. It used to take effect at the next
+restart of the service, because the quadlet bind mounted `/etc/group` and
+`usermod` replaces that file rather than editing it in place. See the mount
+notes above.
+
+To start from an inventory that already exists rather than from what this
+machine discovers about itself, see
+[inventory.md](inventory.md#adopting-an-inventory-that-already-exists), and do
+it before the first start.
 
 ## 3. Surviving the runs it launches
 

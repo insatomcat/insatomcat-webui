@@ -52,8 +52,21 @@ Volume=/etc/ssh:/etc/ssh:ro
 # own /proc already reports the host's values.
 Volume=/sys:/sys:ro
 Volume=/run/systemd:/run/systemd:ro
-Volume=/var/log/journal:/var/log/journal:ro
-Volume=/run/log/journal:/run/log/journal:ro
+# The D-Bus system socket, which is how `systemctl` asks the host's systemd for
+# unit states. Without it every unit reads "unknown" and the node view carries a
+# warning nobody can act on. The directory and not the socket, because dbus
+# recreates the socket when it restarts and a bind mount of the file would then
+# point at an inode that no longer accepts connections. Read only is enough:
+# connecting to a socket is not a write to the filesystem, and what a client may
+# ask the bus for is decided by the bus policy, not by the mount.
+Volume=/run/dbus:/run/dbus:ro
+# The journal. The parent directories and not /var/log/journal itself: that
+# directory does not exist on a machine whose journal is volatile, a missing
+# bind mount source is a container that does not start, and creating it is what
+# turns the host's journal persistent. Changing how the machine logs is not a
+# side effect this service is allowed to have.
+Volume=/var/log:/var/log:ro
+Volume=/run/log:/run/log:ro
 Volume=/etc/tuned:/etc/tuned:ro
 Volume=/run/tuned:/run/tuned:ro
 # The stable by-path names, which are what ceph_osd_disks holds. The whole
@@ -69,10 +82,14 @@ Volume=/var/lib/pacemaker:/var/lib/pacemaker:ro
 Volume=/var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
 Volume=/etc/ceph:/etc/ceph:ro
 
-# PAM authentication against the local accounts.
-Volume=/etc/shadow:/etc/shadow:ro
-Volume=/etc/passwd:/etc/passwd:ro
-Volume=/etc/group:/etc/group:ro
+# PAM authentication against the local accounts, and the Unix group that grants
+# each role. The whole directory read only, rather than a bind mount of
+# /etc/passwd, /etc/group and /etc/shadow: `usermod` and `passwd` write a new
+# file and rename it over the old one, so a bind mount of the file pins the
+# inode the container started with, and an operator added to seapath-admin stays
+# locked out until this service is restarted. The image symlinks the three files
+# into this mount, and a symlink is resolved at every open.
+Volume=/etc:/run/host/etc:ro
 
 Environment=PYTHONUNBUFFERED=1
 # Administration address, from ip_addr in the inventory. Substituted by the
@@ -86,6 +103,18 @@ Environment=PYTHONUNBUFFERED=1
 [Service]
 Restart=always
 RestartSec=5
+
+# Dropping this file on a machine and starting the unit has to be enough. A
+# missing bind mount source is a container that does not start, and podman
+# cannot be relied on to create one, so the directories are created here rather
+# than left to the Ansible role, to the ISO, or to the operator's memory. All of
+# them are inert when empty: the mounts that would not be, /var/log/journal
+# above all, take an existing parent instead.
+ExecStartPre=/usr/bin/mkdir -p /etc/seapath/webui /etc/seapath/inventory \
+    /var/lib/seapath-webui /etc/corosync /var/lib/pacemaker /etc/ceph \
+    /etc/tuned /run/tuned /run/dbus /run/log
+# The TLS private key, the SSH private key and the session secret live there.
+ExecStartPre=/usr/bin/chmod 0700 /etc/seapath/webui
 # Housekeeping CPUs only, substituted from the node's isolated set by the
 # Ansible role. Never a hardcoded value, and the exact opposite of the rtperfui
 # quadlet: this service must never compete with a real time guest.

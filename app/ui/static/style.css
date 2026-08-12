@@ -20,6 +20,15 @@
   box-sizing: border-box;
 }
 
+/* Every panel and every modal in this UI is shown and dismissed with the
+   `hidden` attribute, and a `display` rule in this file beats the attribute's
+   own user agent style. Without this rule the confirmation modal, which is
+   `display: grid`, is on screen from the moment a page loads and cannot be
+   dismissed. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -153,9 +162,11 @@ button:disabled {
   color: var(--warn);
 }
 
+/* `min(24rem, 100%)` rather than `24rem`, so a narrow window shrinks the single
+   column instead of pushing the whole page sideways. */
 .page {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(24rem, 100%), 1fr));
   gap: 1rem;
   padding: 1.25rem;
 }
@@ -169,7 +180,13 @@ button:disabled {
   color: #eccd93;
 }
 
+/* The tracks are `1fr`, a flexible maximum, so a card's automatic minimum size
+   is not its content: the card is exactly as wide as its track, and anything
+   wider than that spills over the border unless it is told to wrap or to
+   scroll. Both are arranged below, and a card holding a table wide enough to
+   need the whole page says so with `wide`. */
 .card {
+  min-width: 0;
   padding: 1rem 1.25rem;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -195,8 +212,26 @@ dt {
   color: var(--muted);
 }
 
+/* `anywhere` and not `break-word`: only `anywhere` also lowers the minimum
+   content width, which is what keeps a long command line or a `by-path` name
+   from widening the card that holds it. */
 dd {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A table of machine values does not shrink gracefully: a `by-path` name and a
+   MAC address have no break opportunity worth taking, and forcing one turns
+   "available" into "availab / le". So the tables that carry them take the whole
+   page width, where they fit. */
+.card.wide {
+  grid-column: 1 / -1;
+}
+
+/* And when even that is not enough, on a narrow window, the table scrolls
+   inside its own card rather than over the one next to it. */
+.table-scroll {
+  overflow-x: auto;
 }
 
 table {
@@ -362,7 +397,7 @@ td button {
 }
 
 .page.split {
-  grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+  grid-template-columns: minmax(min(18rem, 100%), 24rem) minmax(0, 1fr);
   align-items: start;
 }
 

@@ -5,10 +5,14 @@
 
 from __future__ import annotations
 
+import logging
 import time
+from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.core import bootstrap
 from app.core.auth import Role, UnixGroupDirectory, User
 from app.core.sessions import SessionStore
 from app.core.settings import Settings
@@ -108,3 +112,23 @@ def test_root_can_be_refused_once_a_site_has_other_accounts(
     settings = settings.model_copy(update={"allow_root_login": False})
 
     assert UnixGroupDirectory(settings).role_for("root") is None
+
+
+def test_a_missing_host_etc_is_named_instead_of_looking_like_bad_passwords(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The image symlinks the three account files into the read only /etc the
+    # quadlet mounts. If that mount is missing they lead nowhere, and the only
+    # other symptom is every password being refused, which looks exactly like a
+    # machine whose operators have all forgotten theirs.
+    real = tmp_path / "passwd"
+    real.write_text("root:x:0:0:root:/root:/bin/sh\n")
+    dangling = tmp_path / "group"
+    dangling.symlink_to(tmp_path / "never-mounted" / "group")
+    monkeypatch.setattr(bootstrap, "_ACCOUNT_FILES", (str(real), str(dangling)))
+
+    with caplog.at_level(logging.ERROR):
+        missing = bootstrap.check_account_files()
+
+    assert missing == [str(dangling)]
+    assert "/run/host/etc" in caplog.text

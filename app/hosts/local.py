@@ -449,8 +449,13 @@ class LocalHostReader:
                         "The output of `systemctl list-units` is unexpected."
                     )
             else:
+                # Naming D-Bus is not a detail. The only way this fails on a
+                # running machine is a container that cannot reach the host's
+                # bus, so the message has to point at the mount rather than at
+                # the machine, which is fine.
                 warnings.append(
-                    "Unit states are unavailable: "
+                    "Unit states are unavailable, because `systemctl` could not "
+                    "reach the host's systemd over D-Bus: "
                     + (result.stderr.strip() or "systemctl returned an error")
                 )
 
@@ -467,10 +472,12 @@ class LocalHostReader:
     # Disks
 
     def disks(self) -> DisksReading:
-        warnings = [
-            "Claim state is derived from partitions and holders. A whole disk "
-            "filesystem in use is not visible from /sys alone."
-        ]
+        # A warning is something that went wrong on this machine, and an
+        # operator learns to read the banner only as long as that stays true.
+        # How the claim state is derived, and that a whole disk filesystem is
+        # invisible from /sys, is a permanent property of the reading: it
+        # belongs next to the table, not in the banner. The disks card says it.
+        warnings: list[str] = []
         by_path = self._by_path_index()
         if not by_path:
             warnings.append(

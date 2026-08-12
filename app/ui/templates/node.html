@@ -29,44 +29,52 @@ SPDX-License-Identifier: Apache-2.0
     <dl id="time-summary"></dl>
   </section>
 
-  <section class="card" id="card-network">
+  <section class="card wide" id="card-network">
     <h2>Network</h2>
-    <table id="network-table">
-      <thead>
-        <tr>
-          <th>Interface</th><th>State</th><th>Addresses</th>
-          <th>Speed</th><th>Driver</th><th>MAC</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="table-scroll">
+      <table id="network-table">
+        <thead>
+          <tr>
+            <th>Interface</th><th>State</th><th>Addresses</th>
+            <th>Speed</th><th>Driver</th><th>MAC</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
-  <section class="card" id="card-services">
+  <section class="card wide" id="card-services">
     <h2>Services</h2>
-    <table id="services-table">
-      <thead>
-        <tr><th>Unit</th><th>State</th><th>Detail</th><th>Journal</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="table-scroll">
+      <table id="services-table">
+        <thead>
+          <tr><th>Unit</th><th>State</th><th>Detail</th><th>Journal</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
     <pre class="journal" id="journal" hidden></pre>
   </section>
 
-  <section class="card" id="card-disks">
+  <section class="card wide" id="card-disks">
     <h2>Disks</h2>
-    <table id="disks-table">
-      <thead>
-        <tr>
-          <th>Device</th><th>Size</th><th>Model</th>
-          <th>Stable path</th><th>State</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="table-scroll">
+      <table id="disks-table">
+        <thead>
+          <tr>
+            <th>Device</th><th>Size</th><th>Model</th>
+            <th>Stable path</th><th>State</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
     <p class="legend">
       Ceph uses the stable <code>by-path</code> name, which is what
-      <code>ceph_osd_disks</code> holds in the inventory.
+      <code>ceph_osd_disks</code> holds in the inventory. The state is derived
+      from partitions and holders, so a whole disk filesystem, one with no
+      partition table, is not visible here and reads as available.
     </p>
   </section>
 </main>

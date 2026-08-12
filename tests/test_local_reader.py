@@ -283,6 +283,16 @@ def test_disks_carry_the_by_path_name_and_their_claim_state(
     assert devices["sdc"].holders == ["dm-0"]
 
 
+def test_a_disk_reading_that_worked_carries_no_warning(
+    reader: LocalHostReader,
+) -> None:
+    # The banner is worth reading only as long as it means something went wrong
+    # on this machine. How the claim state is derived, and that a whole disk
+    # filesystem is invisible from /sys, is a permanent property of the
+    # reading: it belongs in the disks card, and that is where it is now.
+    assert reader.disks().warnings == []
+
+
 def test_the_by_path_name_of_a_disk_is_never_a_partition_link(
     reader: LocalHostReader,
 ) -> None:

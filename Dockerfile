@@ -110,6 +110,20 @@ ENV SEAPATH_WEBUI_COLLECTION_VERSION=${COLLECTION_VERSION} \
 
 COPY packaging/pam/seapath-webui /etc/pam.d/seapath-webui
 
+# The host's accounts, reached through the read only /etc the quadlet mounts at
+# /run/host/etc. Symlinks rather than a bind mount of each file, because
+# `usermod` and `passwd` write a new file and rename it over the old one: a bind
+# mount pins the inode the container started with, so an operator added to
+# seapath-admin, or a password just changed, would not be seen until this
+# service is restarted. A symlink is resolved at every open.
+#
+# Nothing else in the image reads these, and if the mount is missing they are
+# dangling: the service says so at startup, because the only other symptom is
+# every password being refused.
+RUN ln -sf /run/host/etc/passwd /etc/passwd && \
+    ln -sf /run/host/etc/group /etc/group && \
+    ln -sf /run/host/etc/shadow /etc/shadow
+
 WORKDIR /app
 COPY app ./app
 

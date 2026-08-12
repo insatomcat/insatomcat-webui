@@ -17,21 +17,18 @@ the highest severity in this project.
 
 ### Prerequisites
 
-Create the mount sources that a freshly installed machine does not have, since
-podman refuses to start a container whose bind mount source is missing:
-
-```bash
-sudo mkdir -p /etc/seapath/webui /etc/seapath/inventory /var/lib/seapath-webui \
-              /etc/corosync /etc/ceph /var/lib/pacemaker
-```
-
-Then install the image and the quadlet, and start it:
+Install the image and the quadlet, and start it:
 
 ```bash
 sudo cp seapath-webui.container /etc/containers/systemd/
 sudo systemctl daemon-reload
 sudo systemctl start seapath-webui
 ```
+
+That is the whole prerequisite. It used to be preceded by a `mkdir -p` of six
+directories, because podman refuses to start a container whose bind mount source
+is missing, and the first real deployment needed exactly that. The unit now
+creates them itself. See [deployment.md](deployment.md#2-quadlet).
 
 ### Checklist
 
@@ -95,6 +92,26 @@ playbook that reboots the host running it.
 
 Check 5 is the one that decides whether the milestone is real. Everything else
 can pass while the product claim is false.
+
+### First contact with real hardware
+
+The checklist above has not been filled in yet, because the first attempt to run
+it turned up six things that had to be fixed before the answers would mean
+anything. All six are packaging and interface faults rather than product ones,
+and none of them is visible from a laptop, which is the point of this document.
+
+| Found | Cause | Fix |
+|---|---|---|
+| The quadlet needed `/etc/seapath/webui`, `/etc/seapath/inventory` and `/var/lib/seapath-webui` created by hand | A missing bind mount source is a container that does not start, and the directories were left to a role that does not exist yet | The unit creates them in `ExecStartPre` |
+| Nothing said how to start from an inventory that already exists | Only the discovery path was documented | [inventory.md](inventory.md#adopting-an-inventory-that-already-exists) |
+| Adding an operator to a SEAPATH group needed the service restarted | `usermod` renames a new `/etc/group` over the old one, and the quadlet bind mounted the file, pinning the inode | The host's `/etc` is mounted read only at `/run/host/etc` and the image symlinks the three account files into it |
+| Every unit read "unknown", with `Failed to connect to system scope bus` on screen at every sign in | `/run/systemd` does not carry the D-Bus system socket | `/run/dbus` is mounted; this is check 10, which was the one expected to need a quadlet adjustment |
+| A permanent caveat about how disk claim state is derived sat in the warning banner | It was a warning on every reading, whether or not anything went wrong | Moved into the disks card, next to the table it qualifies |
+| Tables spilled out of their cards, and clicking Configuration or Runs opened a confirmation dialog that could not be dismissed | The cards sit in flexible grid tracks, so nothing widens one to fit a `by-path` name; and the modal is `display: grid`, which beats the `hidden` attribute | The tables of machine values take the whole page width, scroll inside their own card when that is still not enough, and `[hidden]` is enforced |
+
+The last two are the ones worth remembering: a warning nobody can act on, and a
+dialog that appears unasked, both teach an operator to stop reading what the UI
+says. On a substation hypervisor that is a safety property, not a cosmetic one.
 
 ### Result
 
