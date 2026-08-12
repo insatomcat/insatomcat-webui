@@ -71,15 +71,11 @@ FROM python:3.11-slim
 #   git                     the inventory repository, which is the audit trail
 #   openssh-client          the configuration plane, which reaches every node
 #                           over SSH including the local one
-#   iproute2, systemd,
-#   chrony                  the three observation readings that are not in
-#                           /proc or /sys. Only the `chronyc` client is used:
-#                           this image never runs a time daemon, the host's
-#                           timemaster owns that.
+#   iproute2, systemd       the two observation readings that are not in /proc
+#                           or /sys
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates \
-        chrony \
         git \
         iproute2 \
         libpam-modules \

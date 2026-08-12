@@ -15,8 +15,8 @@ from app.hosts.models import (
     LogReading,
     NetworkReading,
     NodeIdentity,
+    PtpClock,
     ServicesReading,
-    TimeReading,
 )
 
 
@@ -89,7 +89,7 @@ class HostReader(Protocol):
 
     def network(self) -> NetworkReading: ...
 
-    def time_sync(self) -> TimeReading: ...
+    def ptp_clocks(self) -> list[PtpClock]: ...
 
     def services(self, units: list[str]) -> ServicesReading: ...
 

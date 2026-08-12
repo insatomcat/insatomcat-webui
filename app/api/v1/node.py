@@ -20,7 +20,6 @@ from app.hosts.models import (
     LogReading,
     NetworkReading,
     ServicesReading,
-    TimeReading,
 )
 from app.services.node import NodeService, NodeSummary
 
@@ -48,11 +47,6 @@ def cpu(request: Request) -> CpuReading:
 @router.get("/network", response_model=NetworkReading)
 def network(request: Request) -> NetworkReading:
     return _service(request).network()
-
-
-@router.get("/time", response_model=TimeReading)
-def time(request: Request) -> TimeReading:
-    return _service(request).time_sync()
 
 
 @router.get("/services", response_model=ServicesReading)

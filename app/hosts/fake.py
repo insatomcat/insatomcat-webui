@@ -29,7 +29,6 @@ from app.hosts.models import (
     PtpClock,
     ServicesReading,
     ServiceUnit,
-    TimeReading,
 )
 
 _BOOT_TIME = datetime(2026, 8, 11, 6, 0, 0, tzinfo=UTC)
@@ -143,16 +142,8 @@ class FakeHostReader:
             default_gateway="192.168.200.1",
         )
 
-    def time_sync(self) -> TimeReading:
-        return TimeReading(
-            synchronised=True,
-            source="timemaster",
-            reference="PTP",
-            stratum=1,
-            offset_seconds=0.000000132,
-            ptp_clocks=[PtpClock(device="ptp0", clock_name="ice-ptp")],
-            system_time=_BOOT_TIME,
-        )
+    def ptp_clocks(self) -> list[PtpClock]:
+        return [PtpClock(device="ptp0", clock_name="ice-ptp")]
 
     def services(self, units: list[str]) -> ServicesReading:
         active = {

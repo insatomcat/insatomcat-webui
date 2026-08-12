@@ -68,7 +68,7 @@ def discover(reader: HostReader) -> Discovery:
 
     warnings = [*identity.warnings, *network.warnings, *cpu.warnings, *disks.warnings]
 
-    ptp_devices = {clock.device for clock in reader.time_sync().ptp_clocks}
+    ptp_devices = {clock.device for clock in reader.ptp_clocks()}
     interfaces = [
         InterfaceCandidate(
             name=item.name,

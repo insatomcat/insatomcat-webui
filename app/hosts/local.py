@@ -37,7 +37,6 @@ from app.hosts.models import (
     PtpClock,
     ServicesReading,
     ServiceUnit,
-    TimeReading,
 )
 from app.hosts.reader import (
     UNPRIVILEGED_UID,
@@ -354,71 +353,29 @@ class LocalHostReader:
             return fields[0], _hex_to_ipv4(fields[2])
         return None, None
 
-    # Time
+    # PTP
 
-    def time_sync(self) -> TimeReading:
-        warnings: list[str] = []
-        clocks = []
-        ptp_root = self._path("sys/class/ptp")
-        try:
-            for entry in sorted(ptp_root.iterdir()):
-                clocks.append(
-                    PtpClock(
-                        device=entry.name,
-                        clock_name=self._read_text(
-                            "sys/class/ptp", entry.name, "clock_name"
-                        ),
-                    )
-                )
-        except OSError:
-            warnings.append("No PTP clock is visible under /sys/class/ptp.")
+    def ptp_clocks(self) -> list[PtpClock]:
+        """The hardware clocks this machine carries.
 
-        source = None
-        units = self.services(
-            ["timemaster.service", "chronyd.service", "chrony.service"]
-        )
-        for unit in units.units:
-            if unit.active_state == "active":
-                source = "timemaster" if unit.unit.startswith("timemaster") else "ntp"
-                break
-
-        reading = TimeReading(
-            source=source,
-            ptp_clocks=clocks,
-            system_time=datetime.now(tz=UTC),
-            warnings=warnings,
-        )
-        self._fill_chrony_tracking(reading)
-        return reading
-
-    def _fill_chrony_tracking(self, reading: TimeReading) -> None:
-        """Offset and stratum, when chronyd answers.
-
-        `timemaster` supervises chronyd itself, and whether its command socket
-        is reachable from here depends on the generated configuration. An
-        unreachable daemon leaves the offset unknown, which is reported rather
-        than replaced by a zero an operator could mistake for "in sync".
+        Whether the clock is disciplined, and by how far it is off, is a metric
+        the node exporter already publishes. What no exporter answers is the
+        question discovery asks: does this machine have a PTP capable clock at
+        all, which is what decides whether the form offers a `ptp_interface`.
         """
-        result = self._runner.run(["chronyc", "-c", "tracking"])
-        if not result.ok:
-            reading.warnings.append(
-                "The time offset is unavailable: "
-                + (result.stderr.strip() or "chronyc could not reach the daemon")
-            )
-            return
-        fields = result.stdout.strip().split(",")
-        if len(fields) < 14:
-            reading.warnings.append(
-                "The output of `chronyc -c tracking` is unexpected."
-            )
-            return
-        reading.reference = fields[1] or None
         try:
-            reading.stratum = int(fields[2])
-            reading.offset_seconds = float(fields[4])
-        except ValueError:
-            reading.warnings.append("The chrony tracking values could not be parsed.")
-        reading.synchronised = fields[13].strip().lower() == "normal"
+            entries = sorted(self._path("sys/class/ptp").iterdir())
+        except OSError:
+            # No clock, or no /sys. Both mean the same to the form, and a
+            # machine with no PTP hardware is an ordinary observer node.
+            return []
+        return [
+            PtpClock(
+                device=entry.name,
+                clock_name=self._read_text("sys/class/ptp", entry.name, "clock_name"),
+            )
+            for entry in entries
+        ]
 
     # Services
 

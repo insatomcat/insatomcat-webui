@@ -14,7 +14,6 @@ _ENDPOINTS = [
     "/api/v1/node",
     "/api/v1/node/cpu",
     "/api/v1/node/network",
-    "/api/v1/node/time",
     "/api/v1/node/services",
     "/api/v1/node/disks",
 ]

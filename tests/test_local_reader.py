@@ -65,12 +65,6 @@ def runner() -> FakeCommandRunner:
                 ),
                 "",
             ),
-            "chronyc -c tracking": CommandResult(
-                0,
-                "7F7F0101,PTP,1,1754899200.0,0.000000132,0.000000101,"
-                "0.000000090,-0.001,0.000,0.010,0.000010,0.000030,4,Normal\n",
-                "",
-            ),
             "journalctl": CommandResult(
                 0,
                 "\n".join(
@@ -239,22 +233,14 @@ def test_missing_iproute_degrades_with_the_reason(host: Path) -> None:
     assert any("addresses are unavailable" in w for w in network.warnings)
 
 
-def test_the_time_offset_comes_from_chrony(reader: LocalHostReader) -> None:
-    time_sync = reader.time_sync()
-
-    assert time_sync.reference == "PTP"
-    assert time_sync.stratum == 1
-    assert time_sync.offset_seconds == pytest.approx(1.32e-07)
-    assert time_sync.synchronised is True
-    assert [clock.clock_name for clock in time_sync.ptp_clocks] == ["ice-ptp"]
+def test_the_ptp_clocks_come_from_sysfs(reader: LocalHostReader) -> None:
+    assert [clock.clock_name for clock in reader.ptp_clocks()] == ["ice-ptp"]
 
 
-def test_an_unreachable_chronyd_leaves_the_offset_unknown(host: Path) -> None:
-    time_sync = LocalHostReader(root=host, runner=FakeCommandRunner()).time_sync()
-
-    # Never a zero offset: an operator would read that as "in sync".
-    assert time_sync.offset_seconds is None
-    assert any("offset is unavailable" in w for w in time_sync.warnings)
+def test_a_machine_with_no_ptp_hardware_reads_as_empty(tmp_path: Path) -> None:
+    # An observer node has no PTP clock, which is ordinary rather than
+    # degraded: the discovery form simply does not offer a ptp_interface.
+    assert LocalHostReader(root=tmp_path / "empty").ptp_clocks() == []
 
 
 def test_a_unit_systemd_does_not_know_is_reported_as_absent(

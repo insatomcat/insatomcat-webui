@@ -145,33 +145,6 @@
     });
   }
 
-  async function loadTime() {
-    const time = await API.get("/node/time");
-    collectWarnings(time);
-    fillList(document.getElementById("time-summary"), [
-      ["Source", text(time.source)],
-      ["Reference", text(time.reference)],
-      ["Stratum", text(time.stratum)],
-      [
-        "Offset",
-        time.offset_seconds === null || time.offset_seconds === undefined
-          ? "unknown"
-          : (time.offset_seconds * 1e6).toFixed(3) + " us",
-      ],
-      [
-        "Synchronised",
-        time.synchronised === null || time.synchronised === undefined
-          ? "unknown"
-          : String(time.synchronised),
-      ],
-      [
-        "PTP clocks",
-        time.ptp_clocks.map((clock) => clock.clock_name || clock.device).join(", ") ||
-          "none",
-      ],
-    ]);
-  }
-
   async function loadNetwork() {
     const network = await API.get("/node/network");
     collectWarnings(network);
@@ -275,7 +248,6 @@
         Chrome.load(),
         loadSummary(),
         loadCpu(),
-        loadTime(),
         loadNetwork(),
         loadServices(),
         loadDisks(),

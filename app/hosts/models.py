@@ -90,16 +90,6 @@ class PtpClock(BaseModel):
     clock_name: str | None = None
 
 
-class TimeReading(Reading):
-    synchronised: bool | None = None
-    source: str | None = None
-    reference: str | None = None
-    stratum: int | None = None
-    offset_seconds: float | None = None
-    ptp_clocks: list[PtpClock] = Field(default_factory=list)
-    system_time: datetime | None = None
-
-
 class ServiceUnit(BaseModel):
     unit: str
     load_state: str | None = None

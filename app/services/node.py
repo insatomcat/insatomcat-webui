@@ -24,7 +24,6 @@ from app.hosts.models import (
     Reading,
     ServicesReading,
     ServiceUnit,
-    TimeReading,
 )
 from app.hosts.reader import HostReader
 
@@ -101,9 +100,6 @@ class NodeService:
 
     def network(self) -> NetworkReading:
         return self._reader.network()
-
-    def time_sync(self) -> TimeReading:
-        return self._reader.time_sync()
 
     def services(self) -> ServicesReading:
         return self._reader.services(list(UNITS_OF_INTEREST))
