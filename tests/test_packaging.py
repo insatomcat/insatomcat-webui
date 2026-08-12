@@ -65,9 +65,15 @@ def test_the_journal_is_mounted_by_its_parent_and_never_created() -> None:
     assert "/run/log" in _SOURCES
 
 
-def test_unit_states_have_a_bus_to_ask() -> None:
-    # /run/systemd alone does not carry the D-Bus system socket, and without it
-    # `systemctl list-units` fails and every unit reads "unknown".
+def test_unit_states_are_asked_over_the_bus_and_not_the_private_socket() -> None:
+    # systemctl running as root tries /run/systemd/private before the bus. It
+    # connects, then checks the peer credentials, and a container with its own
+    # PID namespace cannot be told the host's PID 1: the kernel reports pid 0
+    # and systemd gives up with ENODATA. Mounting /run/systemd/system, which is
+    # all `sd_booted()` looks at, rather than the whole of /run/systemd, is what
+    # sends systemctl to the bus instead.
+    assert "/run/systemd" not in _SOURCES
+    assert "/run/systemd/system" in _SOURCES
     assert "/run/dbus" in _SOURCES
 
 

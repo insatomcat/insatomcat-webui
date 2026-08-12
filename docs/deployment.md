@@ -115,12 +115,33 @@ starting.
   or `StrictHostKeyChecking=no`, which is a real man in the middle window on
   the administration network. No network is involved, so there is nothing to
   intercept. See [cluster-join.md](cluster-join.md).
-- **`/run/dbus`, read only.** `systemctl` asks the host's systemd for unit
-  states over the D-Bus system socket, and `/run/systemd` alone does not carry
-  it. Without this mount every unit reads "unknown" and the node view shows
-  `Failed to connect to system scope bus`, which is true and useless. The
-  directory rather than the socket: dbus recreates the socket when it restarts,
-  and a bind mount of the file would then point at an inode nothing listens on.
+- **`/run/systemd/system` and `/run/dbus`, read only, and the pair is one
+  decision.** This is the mount the first deployment got wrong twice, so it is
+  worth writing down in full.
+
+  `systemctl` running as **root** does not go to the bus. It connects to
+  `/run/systemd/private` first, deliberately, so that it still works during
+  early boot before dbus exists. That socket comes with `/run/systemd`, so the
+  container had it, and the connection succeeded. What failed is the check
+  immediately after: systemd reads the peer credentials with `SO_PEERCRED`, and
+  the kernel cannot express the host's PID 1 in a container that has its own PID
+  namespace, so it reports `pid 0`. systemd rejects that as unusable and returns
+  `ENODATA`, which surfaces as `Failed to connect to system scope bus via local
+  transport: No data available`. The connection had already succeeded, so
+  nothing fell back to the bus, and adding `/run/dbus` alone changed nothing.
+
+  So the container is given `/run/systemd/system`, which is the only thing
+  `sd_booted()` looks at and without which systemctl refuses to run at all, and
+  **not** its parent. With no private socket in sight, systemctl falls through
+  to `/run/dbus/system_bus_socket`, where the peer is dbus rather than PID 1 and
+  the EXTERNAL authentication only cares about the uid, which containers do
+  express. The directory rather than the socket, because dbus recreates the
+  socket when it restarts, and a bind mount of the file would then point at an
+  inode nothing listens on.
+
+  The alternative was `--pid=host`, and it is the reason this design says no to
+  it: needing the host's PID namespace to read a unit state is out of all
+  proportion to reading a unit state.
 
 Two mounts changed shape once the service met a real machine, and both times
 because a bind mount pins an inode:
