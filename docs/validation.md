@@ -42,22 +42,27 @@ creates them itself. See [deployment.md](deployment.md#2-quadlet).
 | 5 | An account in `seapath-viewer` signs in and sees the node view; an account in no SEAPATH group is refused, naming the groups | PAM and `getgrnam` against the host's real files | |
 | 6 | The node view shows the **machine's** hostname, not a container id | `/etc/hostname` mount and the UTS namespace | |
 | 7 | The kernel release, distribution and uptime match `uname -r`, `/etc/os-release` and `uptime` | | |
-| 8 | The isolated set matches `cat /sys/devices/system/cpu/isolated`, and the tuned profile matches `tuned-adm active` | | |
+| 8 | The isolated set matches `cat /sys/devices/system/cpu/isolated` | | |
 | 9 | Interface addresses match `ip addr`, and the default route interface matches `ip route` | `ip -j` output and the host network namespace | |
-| 10 | Unit states match `systemctl status` for each unit listed | `systemctl` reaching the host's systemd from a container, which is the mount most likely to fail, and did | |
-| 11 | The journal button returns real lines for a unit that has some | `journalctl` needs `/etc/machine-id` and the journal directories | |
-| 12 | The disk list shows every disk with the same `by-path` name as `ls -l /dev/disk/by-path`, the boot disk marked in use and any spare marked available | The OSD selector at M4 depends on exactly this | |
-| 13 | The time card shows a PTP source and a plausible offset, or says the offset is unavailable and why | `chronyc` reaching a `timemaster` supervised chronyd is the uncertain part | |
-| 14 | `systemctl show seapath-webui -p CPUAffinity` reports the housekeeping CPUs only | Real time safety | |
-| 15 | `cyclictest` results on the isolated CPUs are unchanged with the service running and stopped | The service must be invisible to a real time guest | |
-| 16 | After a `podman stop` and start, the certificate fingerprint is unchanged and sessions are still valid | The material must be generated once, and the session secret persisted | |
-| 17 | Nothing outside `/etc/seapath/webui` was written. Compare `find /etc /var/lib -newer <marker> -not -path '/etc/seapath/*'` before and after a full browse of the UI | **The point of M0.** No writing anywhere | |
+| 10 | The disk list shows every disk with the same `by-path` name as `ls -l /dev/disk/by-path`, the boot disk marked in use and any spare marked available | The OSD selector at M4 depends on exactly this | |
+| 11 | `podman exec seapath-webui systemctl list-units` fails, and `podman exec seapath-webui journalctl -n1` fails | The container is meant to have no route to the host's systemd. This one is expected to fail and passes when it does | |
+| 12 | `systemctl show seapath-webui -p CPUAffinity` reports the housekeeping CPUs only | Real time safety | |
+| 13 | `cyclictest` results on the isolated CPUs are unchanged with the service running and stopped | The service must be invisible to a real time guest | |
+| 14 | After a `podman stop` and start, the certificate fingerprint is unchanged and sessions are still valid | The material must be generated once, and the session secret persisted | |
+| 15 | Nothing outside `/etc/seapath/webui` was written. Compare `find /etc /var/lib -newer <marker> -not -path '/etc/seapath/*'` before and after a full browse of the UI | **The point of M0.** No writing anywhere | |
 
-Checks 10, 11 and 13 are the ones expected to need a quadlet adjustment: they
-depend on reaching host daemons through mounted sockets and directories, which
-is the part no laptop can rehearse. If one of them fails, the reading must
-degrade with a message naming what is missing, never fall back to a plausible
-looking value.
+This list used to carry three more checks: unit states against `systemctl
+status`, the journal button, and the time card's offset. They were the ones
+expected to need a quadlet adjustment, and check 10 duly did, twice. The
+readings are gone, along with the mounts they needed, because every node runs
+`prometheus-node-exporter` and that is where live state belongs. Check 11 is
+what is left of them, and it passes when the command fails. See
+[deployment.md](deployment.md#21-the-monitoring-that-was-here-and-why-it-left).
+
+Checks 8, 9 and 10 remain the ones a laptop cannot rehearse: they read the real
+`/sys`, the real `ip -j` output and the real udev symlinks. If one of them
+fails, the reading must degrade with a message naming what is missing, never
+fall back to a plausible looking value.
 
 ### Result
 
@@ -105,7 +110,7 @@ and none of them is visible from a laptop, which is the point of this document.
 | The quadlet needed `/etc/seapath/webui`, `/etc/seapath/inventory` and `/var/lib/seapath-webui` created by hand | A missing bind mount source is a container that does not start, and the directories were left to a role that does not exist yet | The unit creates them in `ExecStartPre` |
 | Nothing said how to start from an inventory that already exists | Only the discovery path was documented | [inventory.md](inventory.md#adopting-an-inventory-that-already-exists) |
 | Adding an operator to a SEAPATH group needed the service restarted | `usermod` renames a new `/etc/group` over the old one, and the quadlet bind mounted the file, pinning the inode | The host's `/etc` is mounted read only at `/run/host/etc` and the image symlinks the three account files into it |
-| Every unit read "unknown", with `Failed to connect to system scope bus` on screen at every sign in | `systemctl` as root uses `/run/systemd/private` and nothing else, and no container can use that socket: its peer is PID 1, whose credentials do not survive a PID namespace. Since v257 it does not fall back to the bus either | The reading runs under an unprivileged uid, which is the branch that uses the bus, plus `/run/dbus` and `/run/systemd/system` mounted. This was check 10, expected to need a quadlet adjustment, and it turned out not to be a mount problem at all |
+| Every unit read "unknown", with `Failed to connect to system scope bus` on screen at every sign in | `systemctl` as root uses `/run/systemd/private` and nothing else, and no container can use that socket: its peer is PID 1, whose credentials do not survive a PID namespace. Since v257 it does not fall back to the bus either | The reading ran under an unprivileged uid, which is the branch that uses the bus, plus `/run/dbus` and `/run/systemd/system` mounted. This was check 10, expected to need a quadlet adjustment, and it turned out not to be a mount problem at all. **Since removed entirely**: the reading duplicated `prometheus-node-exporter`, so the right fix was not to make it work but to delete it, mounts included |
 | The banner went on naming faults that had been fixed, across service restarts | The node view accumulated warnings in a set that lived as long as the page, and the page refreshes itself without ever reloading | Rebuilt every poll, so a repaired condition disappears on its own |
 | A permanent caveat about how disk claim state is derived sat in the warning banner | It was a warning on every reading, whether or not anything went wrong | Moved into the disks card, next to the table it qualifies |
 | Tables spilled out of their cards, and clicking Configuration or Runs opened a confirmation dialog that could not be dismissed | The cards sit in flexible grid tracks, so nothing widens one to fit a `by-path` name; and the modal is `display: grid`, which beats the `hidden` attribute | The tables of machine values take the whole page width, scroll inside their own card when that is still not enough, and `[hidden]` is enforced |

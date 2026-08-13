@@ -20,10 +20,10 @@ Contents:
 - an OpenSSH client;
 - `libvirt0` and the `vm_manager` package, for the runtime plane;
 - the `ceph` client libraries that `vm_manager` needs in cluster mode;
-- `iproute2`, `systemd` and the `chronyc` client, which is what the three
-  readings that are not in `/proc` or `/sys` need: interface addresses, unit
-  states and the journal, and the time offset. The image never runs a time
-  daemon: `timemaster` on the host owns that.
+- `iproute2`, for the one reading that is not a file under `/proc` or `/sys`:
+  sysfs carries no IPv4 address. No `systemd` and no `chrony`, which this image
+  carried while it read unit states, the journal and the clock offset from the
+  host. See section 2.1.
 
 Each layer arrives with the milestone that uses it, so that the image never
 carries the dependency tree, or the CVEs, of something no code calls yet. M0
@@ -81,81 +81,63 @@ two host paths are mounted writable: the service's own state, and the
 `authorized_keys` of the `ansible` account, which is the trust material. Every
 other mount serves the runtime plane or a read only view.
 
+Thirteen bind mounts, in four groups:
+
+| Group | Mounts | Why |
+|---|---|---|
+| Service state and trust | `/etc/seapath/webui`, `/etc/seapath/inventory`, `/var/lib/seapath-webui`, `/home/ansible/.ssh`, `/etc/ssh` | The configuration plane, which is SSH and nothing else |
+| Hardware and identity | `/sys`, `/dev/disk`, `/etc/hostname`, `/etc/os-release`, `/etc/corosync` | What the inventory form is prefilled from |
+| Runtime plane, M2 | libvirt socket, `/etc/ceph` | Starting, stopping and migrating VMs |
+| Authentication | `/etc` at `/run/host/etc` | PAM against the machine's own accounts |
+
 The file itself is [`seapath-webui.container`](../seapath-webui.container) at the
 root of the repository, kept there rather than copied here so the two cannot
 drift apart.
 
-No `--privileged`, no host podman socket, no `--pid=host`. If an implementation
-finds itself needing one of those, that is the signal that it is about to
-configure the host directly, which is the one thing this design forbids.
+No `--privileged`, no host podman socket, no `--pid=host`, and no route to the
+host's systemd, its bus or its journal. If an implementation finds itself
+needing one of those, that is the signal that it is about to configure the host
+directly, or to reimplement monitoring, and both are things this design
+refuses.
 
-### What the node view actually needs, and what that changed
+### What the reading needs, and the reading that was removed
 
-Writing the read only adapter turned up four mounts the first draft of this
-document was missing, and one that would have stopped the container from
-starting.
+The reading answers one question: **what is this machine?** Its hardware, its
+identity, its cluster membership. That is what the inventory form is prefilled
+from at first boot, and it is the question no exporter answers.
 
-- **`/etc/corosync`, the directory, not `corosync.conf`.** That file only
-  appears once `cluster_setup_ha.yaml` has run. Bind mounting a source that
-  does not exist keeps the container from starting, so the original line would
-  have broken every standalone node, which is exactly the machine M1 targets.
-- **`/etc/hostname`, `/etc/os-release`, `/etc/machine-id`.** The container has
-  its own UTS namespace, so without the first the node view would show a
-  container id where the machine's name belongs. `machine-id` is how
-  `journalctl` finds the right journal directory.
-- **`/etc/tuned` and `/run/tuned`.** The active profile is an RT relevant fact
-  and it lives there.
+It used to answer a second one, what the machine is currently *doing*, and that
+is where every expensive mount in this quadlet came from. It is gone, and the
+reasoning is section 2.1 below, because the temptation to add it back will
+recur and it deserves a straight answer.
+
+What is left:
+
+- **`/sys`, read only.** CPU topology and the isolated set, the netdevs, the
+  block devices. `/proc` is deliberately **not** mounted: `uptime`, `cpuinfo`,
+  `cmdline` and `stat` are not namespaced, and with the host network namespace
+  neither is `/proc/net`, so the container's own `/proc` already reports the
+  host's values.
 - **`/dev/disk`.** The stable `by-path` names are symlinks created by udev, and
   `ceph_osd_disks` is written in that form. Only the symlink directory is
-  mounted, not the device tree.
-- **`/var/log/journal` and `/run/log/journal`,** for the journal tail.
+  mounted, not the device tree. A metric about a disk is no substitute: what
+  the inventory needs is the disk's stable name.
+- **`/etc/hostname` and `/etc/os-release`.** The container has its own UTS
+  namespace, so without the first the node view would show a container id where
+  the machine's name belongs, and the certificate would be issued to one.
+- **`/etc/corosync`, the directory, not `corosync.conf`.** That file only
+  appears once `cluster_setup_ha.yaml` has run, and its presence is what tells a
+  cluster member from a standalone machine. Bind mounting a source that does not
+  exist keeps the container from starting, so naming the file rather than the
+  directory would have broken every standalone node, which is exactly the
+  machine M1 targets.
 - **`/etc/ssh`, read only,** added at M1. It carries the machine's public SSH
   host keys, and reading them off the filesystem is how the first SSH
   connection is verified without either prompting, which hangs a run forever,
   or `StrictHostKeyChecking=no`, which is a real man in the middle window on
   the administration network. No network is involved, so there is nothing to
   intercept. See [cluster-join.md](cluster-join.md).
-- **`/run/systemd/system` and `/run/dbus`, read only, and the pair is one
-  decision.** This is the mount the first deployment got wrong twice, so it is
-  worth writing down in full.
-
-  `systemctl` running as **root** does not go to the bus. It connects to
-  `/run/systemd/private`, deliberately, so that it still works during early boot
-  before dbus exists. That socket comes with `/run/systemd`, so the container
-  had it and the connection succeeded. What failed is the check immediately
-  after: systemd reads the peer credentials with `SO_PEERCRED`, the kernel
-  cannot express the host's PID 1 in a container that has its own PID namespace,
-  so it reports `pid 0`, and systemd rejects that as unusable with `ENODATA`.
-  On screen: `Failed to connect to system scope bus via local transport: No data
-  available`.
-
-  Hiding the private socket only changed the errno to `ENOENT`, because
-  `bus_connect_system_systemd()` lost its fallback to the bus in systemd v257,
-  which is what the image ships. Read as root, that route has no working end.
-
-  What actually fixes it is in `app/hosts/local.py`: **the reading runs under an
-  unprivileged uid.** `bus_connect_transport_systemd()` branches on `geteuid()`,
-  and any uid other than 0 goes straight to `/run/dbus/system_bus_socket`, where
-  the peer is dbus rather than PID 1, the EXTERNAL authentication only weighs
-  the uid, which containers do express, and listing unit states needs no
-  privilege under the default policy. It is also the honest arrangement: a
-  reading that changes nothing has no business being root.
-
-  The two mounts are still both required, and neither is sufficient.
-  `/run/systemd/system` is what `sd_booted()` tests, before the uid branch, and
-  without it systemctl refuses to run at all. `/run/dbus` is where the
-  unprivileged path lands, and it is mounted as a directory rather than a socket
-  because dbus recreates the socket when it restarts, which would leave a bind
-  mount of the file pointing at an inode nothing listens on.
-
-  The alternative was `--pid=host`, and this is the reason the design says no to
-  it: needing the host's PID namespace to read a unit state is out of all
-  proportion to reading a unit state.
-
-Two mounts changed shape once the service met a real machine, and both times
-because a bind mount pins an inode:
-
-- **`/etc`, read only, at `/run/host/etc`,** instead of a bind mount of
+- **`/etc`, read only, at `/run/host/etc`,** for PAM, instead of a bind mount of
   `/etc/passwd`, `/etc/group` and `/etc/shadow`. `usermod` and `passwd` write a
   new file and rename it over the old one, so the container went on reading the
   files as they were when it started: adding an operator to `seapath-admin` did
@@ -163,31 +145,68 @@ because a bind mount pins an inode:
   image symlinks the three files into that mount, and a symlink is resolved at
   every open. If the mount is missing the symlinks dangle, and the service says
   so in the journal at startup rather than silently refusing every password.
-- **`/var/log` and `/run/log`,** the parents, instead of the two journal
-  directories. `/var/log/journal` does not exist on a machine whose journal is
-  volatile, a missing bind mount source is a container that does not start, and
-  creating it is precisely what makes journald persistent. Changing how the
-  machine logs is not a side effect this service may have.
 
-`/proc` is deliberately **not** mounted. `uptime`, `cpuinfo`, `cmdline` and
-`stat` are not namespaced, and with the host network namespace neither is
-`/proc/net`, so the container's own `/proc` already reports the host's values.
-
-Several mounts name paths that do not exist on a freshly installed machine:
+Some of those paths do not exist on a freshly installed machine:
 `/etc/seapath/webui`, `/etc/seapath/inventory`, `/var/lib/seapath-webui`,
-`/etc/ceph`, `/var/lib/pacemaker`, `/etc/corosync`, `/etc/tuned` and
-`/run/tuned`. A missing source is a container that does not start, and a node
-that does not answer its browser is the one failure this whole project exists to
-prevent. So the quadlet creates them itself, in `ExecStartPre`, rather than
-leaving them to the Ansible role or to the ISO. Dropping the file on a machine
-and starting the unit is meant to be enough, and it was not: the first
-deployment on real hardware needed three directories created by hand before the
-container would start.
+`/etc/ceph` and `/etc/corosync`. A missing source is a container that does not
+start, and a node that does not answer its browser is the one failure this whole
+project exists to prevent. So the quadlet creates them itself, in
+`ExecStartPre`, rather than leaving them to the Ansible role or to the ISO.
+Dropping the file on a machine and starting the unit is meant to be enough, and
+it was not: the first deployment on real hardware needed three directories
+created by hand before the container would start.
 
 Each of those paths is inert when empty, which is what makes creating them
-harmless. That is a real constraint and not a formality: `/var/log/journal` is
-deliberately not in the list, because creating that one is how journald switches
-to a persistent journal.
+harmless, and that constraint is why the list may never grow carelessly:
+`/var/log/journal` is the counterexample, because creating that one is how
+journald switches to a persistent journal.
+
+### 2.1 The monitoring that was here, and why it left
+
+This service once served unit states, a journal tail, the chrony offset and the
+active tuned profile. Removing them took eight bind mounts and about seven
+hundred lines out of the project, and the argument is short: **every SEAPATH
+node runs `prometheus-node-exporter`.** Live state is already collected,
+already stored with history, and already alerted on. A node local UI holding a
+second source of truth for it earns nothing, and cannot even be the better one:
+a browser tab nobody has open is not monitoring.
+
+The mounts it cost were `/run/systemd/system`, `/run/dbus`, `/var/log`,
+`/run/log`, `/etc/machine-id`, `/etc/tuned` and `/run/tuned`, plus
+`/var/lib/pacemaker`, which nothing ever read. The image carried `systemd` and
+`chrony` for it.
+
+The part worth keeping in writing is what reading a unit state from a container
+actually takes, because it is the reason this section exists and the reason
+nobody should propose it again lightly.
+
+`systemctl` running as **root** does not go to the bus. It connects to
+`/run/systemd/private`, deliberately, so that it still works during early boot
+before dbus exists. That socket comes with `/run/systemd`, so the container had
+it and the connection succeeded. What failed is the check immediately after:
+systemd reads the peer credentials with `SO_PEERCRED`, the kernel cannot express
+the host's PID 1 in a container that has its own PID namespace, so it reports
+`pid 0`, and systemd rejects that as unusable with `ENODATA`. On screen:
+`Failed to connect to system scope bus via local transport: No data available`.
+
+Hiding the private socket only changed the errno to `ENOENT`, because
+`bus_connect_system_systemd()` lost its fallback to the bus in systemd v257,
+which is what the image shipped. Read as root, that route has no working end.
+What made it work was running the reading under an unprivileged uid:
+`bus_connect_transport_systemd()` branches on `geteuid()`, and any uid other
+than 0 goes straight to `/run/dbus/system_bus_socket`, where the peer is dbus
+rather than PID 1.
+
+Two deployments went into that, and it worked. It was still the wrong thing to
+build: the cost was not the debugging, it was that four of the mounts above and
+thirty five lines of comment about `SO_PEERCRED` became part of what anyone
+deploying this service has to read. The alternative on the table at the time
+was `--pid=host`, and the design was right to refuse it. What the design missed
+is that the weaker version of the same idea was not needed either.
+
+The test `test_the_container_is_given_no_route_to_the_live_state` in
+`tests/test_packaging.py` fails if one of those mounts comes back, so that
+adding one is a decision taken on purpose rather than a line that slips in.
 
 `/home/ansible/.ssh` is not created either, and that is deliberate too. The
 account comes from the ISO, and a service that invents a home directory for a

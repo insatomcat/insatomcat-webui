@@ -199,3 +199,49 @@ Found by building the image: `seapath_setup_prometheus_exporters` and
 `seapath_setup_deploy_seapath_alloc` exist on a feature branch of
 `seapath-ansible` and not on `main`, so an image built from `main` correctly
 offers neither.
+
+## D13 - Settled: live state is the exporter's, this service reads what a machine *is*
+
+The node view first served both halves of "what about this machine": what it
+**is**, meaning its hardware, identity and cluster membership, and what it is
+**doing**, meaning unit states, the journal, the clock offset and the tuned
+profile. Only the first half survives, and the split is the useful decision
+rather than the deletion.
+
+Every SEAPATH node runs `prometheus-node-exporter`. Live state is therefore
+already collected, already kept with history, and already alerted on, and none
+of that is true of a page in a browser nobody has open. A second source of
+truth for it earned nothing.
+
+What it cost is the part worth recording, because the reasoning has to survive
+the next person who wants a services table. Reading a unit state from inside a
+container needs a route to the host's systemd: `systemctl` as root uses
+`/run/systemd/private`, whose peer credentials cannot cross a PID namespace, so
+the reading has to run under an unprivileged uid to reach the bus instead. That
+took two deployments to work out. It brought `/run/systemd/system`, `/run/dbus`,
+`/var/log`, `/run/log` and `/etc/machine-id` into the quadlet, `systemd` and
+`chrony` into the image, and thirty five lines about `SO_PEERCRED` into a file
+whose whole virtue is being short enough to read.
+
+The line drawn, for the next reading somebody proposes:
+
+- it stays if it answers **what the machine is** and comes from a file the
+  container already sees, meaning its own `/proc`, the read only `/sys`, or a
+  mount that is already there for another reason;
+- it goes if it answers **what the machine is doing** and needs a route to a
+  host daemon, whether that is systemd, the journal, chronyd or dbus.
+
+`load_average` and the per CPU busy ratio sit on the near side of that line and
+stayed: `/proc` is not namespaced for either, so they cost no mount, and the
+CPU grid they feed is read while choosing an isolated set rather than as
+monitoring.
+
+The reverse is enforced rather than remembered:
+`test_the_container_is_given_no_route_to_the_live_state` in
+`tests/test_packaging.py` fails if one of those mounts returns.
+
+This also settles what the cluster view will be at M3. Corosync ring state and
+Pacemaker resource placement are live state by the same definition. What this
+service can add that Prometheus cannot is **conformance**: whether the machines
+match the inventory they were converged from, which is a question about the
+desired state and belongs here.

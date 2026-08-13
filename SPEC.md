@@ -63,7 +63,8 @@ Proxmox clone:
 - A guided inventory editor, seeded by hardware discovery on first boot.
 - The trust exchange that lets nodes drive each other.
 - Running the upstream playbooks, with progress, logs, and history.
-- Read only observation of the node and the cluster.
+- Read only observation of what a node **is**: its hardware, its identity and
+  its cluster membership, which is what the inventory form is prefilled from.
 - VM runtime operations through `vm_manager`.
 
 ### Out of scope
@@ -73,6 +74,13 @@ Proxmox clone:
   inventory and the trust material, and nothing else.
 - Fleet operations across several clusters.
 - Replacing Cockpit, which keeps shell, logs and low level access.
+- **Monitoring.** Unit states, the journal, the clock offset, load: every node
+  runs `prometheus-node-exporter`, and that is where live state is read and
+  alerted on. A node local UI holding a second source of truth for it earns
+  nothing and costs this container a route to the host's systemd, which is the
+  most expensive mount in the design. This was in scope once, and taking it
+  back out removed eight bind mounts and about seven hundred lines. See
+  [deployment.md](docs/deployment.md).
 
 ### Deliberately deferred
 
@@ -128,20 +136,22 @@ target deployment.
 |  trust service      -> SSH mesh between nodes    |
 |  run service        -> ansible-runner            |
 |  runtime service    -> vm_manager                |
-|  read services      -> node and cluster state    |
+|  read services      -> what this machine is      |
 +--------------------------------------------------+
      |  SSH as the `ansible` user, sudo         |  local sockets
      v                                          v
   every node of the cluster, including      libvirt, ceph,
-  the local one                             pacemaker, systemd (read)
+  the local one                             /sys (read)
 ```
 
 The service reaches **every** node over SSH, including the machine it runs on,
 because the inventory sets `ansible_connection: ssh` for all hosts. The
 consequence is worth stating plainly: the configuration plane never writes to
 the host filesystem from inside the container. The container needs the libvirt
-socket and the Ceph configuration for the runtime plane, and read access for the
-observation views. It does not need to be privileged.
+socket and the Ceph configuration for the runtime plane, and a read only `/sys`
+and `/dev/disk` to describe its own hardware. It does not need to be
+privileged, and it needs no route to the host's systemd, its bus or its
+journal.
 
 ### 5.2 Two planes
 

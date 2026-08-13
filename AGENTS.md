@@ -71,9 +71,12 @@ requirements.txt
 
 Host access is confined to two adapters, both under `app/hosts/`: an SSH and
 `ansible-runner` adapter for everything that changes a machine, and a read only
-adapter for the observation views. Both have a fake implementation, and the
-whole test suite runs against the fakes, on a laptop, with no cluster and no
-libvirt.
+adapter describing what the machine **is**, which is what the inventory form is
+prefilled from. What a machine is *doing* is not read here at all: every node
+runs `prometheus-node-exporter`, and D13 in [decisions.md](docs/decisions.md)
+records why that boundary is worth defending. Both adapters have a fake
+implementation, and the whole test suite runs against the fakes, on a laptop,
+with no cluster and no libvirt.
 
 Two rules keep that promise true rather than aspirational. The read only
 adapter takes its filesystem root as a parameter, so its parsers are exercised

@@ -134,17 +134,24 @@ presented as "relaunch" rather than as a failure.
 | Method | Path | Description |
 |---|---|---|
 | GET | `/node` | Hostname, distro, kernel, uptime, mode, role, collection version, inventory commit applied |
-| GET | `/node/cpu` | Topology, isolated set, tuned profile, per core busy ratio |
+| GET | `/node/cpu` | Topology, isolated set, per core busy ratio |
 | GET | `/node/network` | Interfaces, addresses, link state, default route |
-| GET | `/node/time` | PTP or NTP source, offset, sync state |
-| GET | `/node/services` | State of the units of interest |
 | GET | `/node/disks` | Block devices with their claim state and stable `by-path` name, feeding the OSD selector |
-| GET | `/node/logs?unit=&lines=` | Journal tail, `unit` restricted to what `/node/services` lists |
 | GET | `/cluster` | Corosync ring, quorum, Pacemaker nodes, configuration lead, stale copies |
 | GET | `/cluster/resources` | Pacemaker resources and their placement |
 | GET | `/conformance` | Result of the last check run per host, and its age |
 
 Open to the `viewer` role, which is the whole point of having one.
+
+**There is no endpoint here for what the machine is currently doing,** and that
+is the shape of this section rather than a gap in it. Unit states, the journal
+tail and the clock offset were served from here once. Every SEAPATH node runs
+`prometheus-node-exporter`, which publishes all three and much else, so this
+service held a second source of truth for live state and paid for it in mounts:
+reading a unit state from a container needs a route to the host's systemd, and
+building that route took two deployments. What is left answers the question no
+exporter answers, the one the inventory form asks: what this machine **is**.
+See [deployment.md](deployment.md).
 
 Three things about `/node` are worth stating, because the obvious reading of
 the table would be wrong:

@@ -41,7 +41,9 @@ forms edit the inventory, and the upstream playbooks are run with
 
 **M0** before it: skeleton, PAM authentication with sessions and CSRF, TLS
 material generated at first boot, the read only node view and its API, the
-image, the quadlet and the test harness.
+image, the quadlet and the test harness. The node view describes what the
+machine is, not what it is doing: live state stays with
+`prometheus-node-exporter`, which every SEAPATH node runs.
 
 M2, next, is the VM runtime plane through `vm_manager`.
 
