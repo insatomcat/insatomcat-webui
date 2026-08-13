@@ -123,7 +123,6 @@
           : "none",
       ],
       ["Housekeeping", cpu.housekeeping.join(",") || "unknown"],
-      ["tuned profile", text(cpu.tuned_profile)],
       [
         "Load average",
         cpu.load_average ? cpu.load_average.join("  ") : "unknown",

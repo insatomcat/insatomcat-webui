@@ -52,7 +52,6 @@ def build_host_tree(root: Path) -> Path:
         root / "proc/cpuinfo",
         "processor\t: 0\nmodel name\t: Intel(R) Xeon(R) Silver 4310 CPU @ 2.10GHz\n",
     )
-    _write(root / "etc/tuned/active_profile", "realtime\n")
     write_proc_stat(root, busy=1000, idle=9000)
 
     # Network

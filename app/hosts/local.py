@@ -196,12 +196,6 @@ class LocalHostReader:
             except ValueError:
                 warnings.append("/proc/loadavg could not be parsed.")
 
-        tuned_profile = self._read_text("etc/tuned/active_profile")
-        if tuned_profile is None:
-            warnings.append(
-                "The tuned profile is unknown: /etc/tuned is not mounted here."
-            )
-
         return CpuReading(
             model=self._cpu_model(),
             present=len(present) or None,
@@ -210,7 +204,6 @@ class LocalHostReader:
             isolated_source=isolated_source,
             nohz_full=nohz_full,
             housekeeping=[cpu for cpu in (present or online) if cpu not in isolated],
-            tuned_profile=tuned_profile or None,
             load_average=load_average,
             topology=topology,
             kernel_cmdline=cmdline,

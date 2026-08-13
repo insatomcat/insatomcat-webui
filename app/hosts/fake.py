@@ -74,7 +74,6 @@ class FakeHostReader:
             isolated_source="sysfs",
             nohz_full=list(_ISOLATED),
             housekeeping=[0, 1, 2, 3],
-            tuned_profile="realtime",
             load_average=[0.15, 0.10, 0.05],
             topology=topology,
             kernel_cmdline=(

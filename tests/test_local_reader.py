@@ -111,7 +111,6 @@ def test_the_isolated_set_is_read_from_sysfs(reader: LocalHostReader) -> None:
     assert cpu.isolated == [4, 5, 6, 7]
     assert cpu.isolated_source == "sysfs"
     assert cpu.housekeeping == [0, 1, 2, 3]
-    assert cpu.tuned_profile == "realtime"
     assert cpu.model.startswith("Intel(R) Xeon(R)")
 
 

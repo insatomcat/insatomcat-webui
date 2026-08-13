@@ -54,7 +54,9 @@ class CpuReading(Reading):
     isolated_source: str | None = None
     nohz_full: list[int] = Field(default_factory=list)
     housekeeping: list[int] = Field(default_factory=list)
-    tuned_profile: str | None = None
+    # From /proc, which is the container's own and is not namespaced for any of
+    # this, so these two cost no mount. That is the line: a live value stays
+    # when it is free, and goes when it needs a route to the host.
     load_average: list[float] | None = None
     topology: list[CpuTopologyEntry] = Field(default_factory=list)
     kernel_cmdline: str | None = None
