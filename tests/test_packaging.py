@@ -41,10 +41,7 @@ _PRE_START = " ".join(
         # Absent from a machine that has never converged, and a missing bind
         # mount source is a container that does not start.
         "/etc/corosync",
-        "/var/lib/pacemaker",
         "/etc/ceph",
-        "/etc/tuned",
-        "/run/tuned",
     ],
 )
 def test_a_mount_source_that_may_be_absent_is_created_by_the_unit(
@@ -55,26 +52,41 @@ def test_a_mount_source_that_may_be_absent_is_created_by_the_unit(
     assert directory in _SOURCES
 
 
-def test_the_journal_is_mounted_by_its_parent_and_never_created() -> None:
-    # Creating /var/log/journal is what switches journald to a persistent
-    # journal, so this service must neither create it nor require it. The
-    # parents always exist.
+@pytest.mark.parametrize(
+    "absent",
+    [
+        # The bus and the private socket, which is what `systemctl` needs. Two
+        # deployments were spent making that route work from a container, and
+        # the reading it served is one prometheus-node-exporter already
+        # publishes on every node.
+        "/run/systemd",
+        "/run/systemd/system",
+        "/run/dbus",
+        # The journal, and the machine-id journalctl needs to find it.
+        "/var/log",
+        "/run/log",
+        "/etc/machine-id",
+        # Read by nothing once the observation plane moved out.
+        "/etc/tuned",
+        "/run/tuned",
+        "/var/lib/pacemaker",
+    ],
+)
+def test_the_container_is_given_no_route_to_the_live_state(absent: str) -> None:
+    # Live state is the exporter's job. Bringing one of these back is a design
+    # decision, not a convenience, so it fails here first. See
+    # docs/deployment.md.
+    assert absent not in _SOURCES
+    assert absent not in _PRE_START
+
+
+def test_the_persistent_journal_is_never_created_by_this_service() -> None:
+    # Creating /var/log/journal is precisely what switches journald from a
+    # volatile journal to a persistent one. Changing how the machine logs is
+    # not a side effect this service may have, and it no longer reads the
+    # journal at all.
     assert "/var/log/journal" not in _SOURCES
     assert "/var/log/journal" not in _PRE_START
-    assert "/var/log" in _SOURCES
-    assert "/run/log" in _SOURCES
-
-
-def test_unit_states_are_asked_over_the_bus_and_not_the_private_socket() -> None:
-    # systemctl running as root tries /run/systemd/private before the bus. It
-    # connects, then checks the peer credentials, and a container with its own
-    # PID namespace cannot be told the host's PID 1: the kernel reports pid 0
-    # and systemd gives up with ENODATA. Mounting /run/systemd/system, which is
-    # all `sd_booted()` looks at, rather than the whole of /run/systemd, is what
-    # sends systemctl to the bus instead.
-    assert "/run/systemd" not in _SOURCES
-    assert "/run/systemd/system" in _SOURCES
-    assert "/run/dbus" in _SOURCES
 
 
 def test_the_host_accounts_are_read_through_a_directory_not_three_files() -> None:
